@@ -61,11 +61,15 @@ import java.util.Set;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 
+import io.socket.client.IO;
+import io.socket.client.Socket;
 import okhttp3.MediaType;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.RequestBody;
 import okhttp3.Response;
+import okhttp3.WebSocket;
+
 
 /**
  * 메인 액티비티 클래스 - 앱의 진입점이자 사용자 인터페이스 및 상호작용을 담당합니다.
@@ -124,6 +128,11 @@ public class MainActivity extends AppCompatActivity implements TextureView.Surfa
     private boolean isProcessingFrame = false;
     private boolean isCameraMode = false;
 
+    private WebSocket webSocket;
+    private boolean isWebSocketConnected = false;
+
+
+    private Socket mSocket;
     /**
      * 액티비티가 생성될 때 호출되는 메서드
      * UI 초기화, 권한 확인, 모델 로딩 등 초기 설정을 수행합니다.
@@ -170,6 +179,8 @@ public class MainActivity extends AppCompatActivity implements TextureView.Surfa
 
 
 
+        // 웹소켓 설정
+        setupSocket();
 
         // UI 요소 초기화 - ID로 뷰 찾기
         btnSelectImage = findViewById(R.id.btnSelectImage);
@@ -261,6 +272,39 @@ public class MainActivity extends AppCompatActivity implements TextureView.Surfa
             }
         });
     }
+
+//웹소켓
+private void setupSocket() {
+    try {
+        mSocket = IO.socket("http://172.30.1.79:5005");  // Socket.IO 서버 URL
+    } catch (Exception e) {
+        e.printStackTrace();
+    }
+    mSocket.connect();  // 연결 시작
+
+    // 연결 성공 시
+    mSocket.on(Socket.EVENT_CONNECT, args -> {
+        Log.d("socket", "웹소켓 연결 성공");
+        try {
+            JSONObject connectMsg = new JSONObject();
+            connectMsg.put("type", "connect");
+            connectMsg.put("message", "Android app connected");
+            mSocket.emit("message", connectMsg.toString());  // 서버로 메시지 전송
+            //event =message이거이므로 서버에있는 @socketio.on('message')이거랑 매칭이 된다.
+            Log.d("socket", "연결 메시지 전송 완료");
+        } catch (Exception e) {
+            Log.e("socket", "연결 메시지 전송 실패: " + e.getMessage());
+        }
+    });
+
+    // 연결 종료 시
+    mSocket.on(Socket.EVENT_DISCONNECT, args -> Log.d("socket", "웹소켓 연결 종료"));
+
+    // 메시지 수신
+    mSocket.on("response", args -> {
+        Log.d("socket", "서버로부터 메시지 수신: " + args[0].toString());
+    });
+}
 
     /**
      * 필요한 권한을 확인하고 없으면 요청하는 메서드
@@ -455,7 +499,7 @@ public class MainActivity extends AppCompatActivity implements TextureView.Surfa
 
                 //ip변경 https -> http로 문제 해결
                 Request request = new Request.Builder()
-                        .url("http://281b-2001-2d8-219c-a51b-1c83-ca41-e80-ad06.ngrok-free.app/receive_image")
+                        .url("http://da02-175-214-112-154.ngrok-free.app/receive_image")
                         .post(body)
                         .build();
 
@@ -476,8 +520,47 @@ public class MainActivity extends AppCompatActivity implements TextureView.Surfa
         }).start();
     }
 
+    private void sendImageViaWebSocket(Bitmap bitmap) {
+        new Thread(() -> {
+            try {
+                Log.d("socket", "이미지 인코딩 시작 - 크기: " + bitmap.getWidth() + "x" + bitmap.getHeight());
+                long startTime = System.currentTimeMillis();
 
+                // 이미지 크기 감소 (성능 향상을 위해)
+                Bitmap resizedBitmap = Bitmap.createScaledBitmap(bitmap,
+                        bitmap.getWidth() / 2,
+                        bitmap.getHeight() / 2, true);
 
+                // JPEG으로 압축 및 Base64 인코딩
+                ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
+                resizedBitmap.compress(Bitmap.CompressFormat.JPEG, 70, byteArrayOutputStream);
+                long compressTime = System.currentTimeMillis();
+                Log.d("socket", "이미지 압축 완료 - 소요시간: " + (compressTime - startTime) + "ms");
+
+                resizedBitmap.recycle(); // 리사이즈된 비트맵 메모리 해제
+
+                byte[] byteArray = byteArrayOutputStream.toByteArray();
+                String base64Image = Base64.encodeToString(byteArray, Base64.DEFAULT);
+                long encodeTime = System.currentTimeMillis();
+                Log.d("socket", "이미지 인코딩 완료 - 크기: " + byteArray.length + "바이트, 소요시간: " +
+                        (encodeTime - compressTime) + "ms");
+
+                // 이미지 데이터 JSON 구성
+                JSONObject imageData = new JSONObject();
+                imageData.put("type", "image");
+                imageData.put("image", base64Image);
+                imageData.put("timestamp", System.currentTimeMillis());
+
+                // 이미지 데이터 전송
+
+                mSocket.emit("message", imageData.toString());//mSocket이용하여 데이터 전송
+
+            } catch (Exception e) {
+                Log.e("socket", "웹소켓 이미지 전송 중 오류: " + e.getMessage());
+                e.printStackTrace(); // 상세 스택 트레이스 출력
+            }
+        }).start();
+    }
 //test~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~```
     private Bitmap drawMultipleBoxOptions(Bitmap bitmap, List<SimpleTracker.TrackedObject> trackedObjects) {
         // 원본 이미지를 변형하지 않기 위해 복사본 생성
@@ -853,6 +936,9 @@ public class MainActivity extends AppCompatActivity implements TextureView.Surfa
                     if (isCameraMode && !isProcessingFrame) {
                         isProcessingFrame = true;
 
+
+                        //수정한부분 : 여기서 주기적으로 이미지만!! 전달하는것
+                        //sendImageViaWebSocket(textureView.getBitmap());
                         // 현재 프리뷰 프레임을 비트맵으로 변환하여 객체 탐지
                         runOnUiThread(() -> {
                             if (textureView.isAvailable()) {
@@ -890,9 +976,8 @@ public class MainActivity extends AppCompatActivity implements TextureView.Surfa
                 final List<SimpleTracker.TrackedObject> trackedObjects = tracker.update(detections);
 
                 Bitmap workingCopy = bitmap.copy(bitmap.getConfig(), true);
-                sendImageToServer(workingCopy,trackedObjects);
-                //final Bitmap resultBitmap = drawMultipleBoxOptions(resizedBitmap, trackedObjects);
-
+                final Bitmap resultBitmap = drawDetectionsDirectly(workingCopy, trackedObjects);
+                sendImageViaWebSocket(resultBitmap);
 
 
                 // 오버레이 업데이트 (원본 비트맵은 변경하지 않음)
