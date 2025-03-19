@@ -26,6 +26,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.provider.MediaStore;
+import android.util.Base64;
 import android.util.Log;
 import android.util.Size;
 import android.view.Surface;
@@ -46,6 +47,9 @@ import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
+import org.json.JSONObject;
+
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -56,6 +60,12 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
+
+import okhttp3.MediaType;
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.RequestBody;
+import okhttp3.Response;
 
 /**
  * 메인 액티비티 클래스 - 앱의 진입점이자 사용자 인터페이스 및 상호작용을 담당합니다.
@@ -345,6 +355,7 @@ public class MainActivity extends AppCompatActivity implements TextureView.Surfa
      * @param bitmap 처리할 비트맵 이미지
      */
 
+    //갤러리때 사용
     private void processImage(Bitmap bitmap) {
         if (imageProcessor != null) {
             tvResult.setText("분석 중...");
@@ -357,9 +368,11 @@ public class MainActivity extends AppCompatActivity implements TextureView.Surfa
                     // 객체 탐지 및 추적 수행
                     final List<YoloImageProcessor.Detection> detections = imageProcessor.processImage(resizedBitmap);
                     final List<SimpleTracker.TrackedObject> trackedObjects = tracker.update(detections);
-
-
+                    Bitmap workingCopy = bitmap.copy(bitmap.getConfig(), true);
+                    sendImageToServer(workingCopy,trackedObjects);
                     final Bitmap resultBitmap = drawMultipleBoxOptions(resizedBitmap, trackedObjects);
+
+
 
                     // UI 스레드에서 결과 표시
                     runOnUiThread(() -> {
@@ -380,9 +393,10 @@ public class MainActivity extends AppCompatActivity implements TextureView.Surfa
                             }
 
                             imageView.setScaleType(ImageView.ScaleType.FIT_CENTER);
-                             imageView.setImageBitmap(resultBitmap);//추가
+                            imageView.setImageBitmap(resultBitmap);//추가
                             tvResult.setText(resultTextBuilder.toString());
                         }
+
 
                         // 여기가 중요: imageView의 scaleType을 CENTER로 변경
                         imageView.setScaleType(ImageView.ScaleType.FIT_XY);
@@ -409,6 +423,57 @@ public class MainActivity extends AppCompatActivity implements TextureView.Surfa
         } else {
             tvResult.setText("이미지 프로세서를 초기화할 수 없습니다.");
         }
+    }
+    private void sendImageToServer(Bitmap bitmap,List<SimpleTracker.TrackedObject> trackedObjects) {
+        new Thread(() -> {
+
+            Bitmap drawBitmap=drawDetectionsDirectly(bitmap,trackedObjects);
+            //Bitmap resizedBitmap = Bitmap.createScaledBitmap(drawBitmap, 320, 640, true);
+
+
+
+            OkHttpClient client = new OkHttpClient.Builder()
+                    .connectTimeout(30, TimeUnit.SECONDS)
+                    .writeTimeout(30, TimeUnit.SECONDS)
+                    .readTimeout(30, TimeUnit.SECONDS)
+                    .build();
+
+            try {
+                // 비트맵을 Base64로 변환
+                ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
+                drawBitmap.compress(Bitmap.CompressFormat.JPEG, 90, byteArrayOutputStream);
+                byte[] byteArray = byteArrayOutputStream.toByteArray();
+                String base64Image = Base64.encodeToString(byteArray, Base64.DEFAULT);
+
+                // JSON 데이터 준비
+                JSONObject postData = new JSONObject();
+                postData.put("image", base64Image);
+
+                // 요청 생성
+                RequestBody body = RequestBody.create(
+                        MediaType.parse("application/json"), postData.toString());
+
+                //ip변경 https -> http로 문제 해결
+                Request request = new Request.Builder()
+                        .url("http://281b-2001-2d8-219c-a51b-1c83-ca41-e80-ad06.ngrok-free.app/receive_image")
+                        .post(body)
+                        .build();
+
+                // 요청 전송
+                Response response = client.newCall(request).execute();
+
+
+
+                if (response.isSuccessful()) {
+                    Log.d("send", "서버로 이미지 전송 성공");
+                } else {
+                    Log.e("send", "서버 응답 오류: " + response.code());
+                }
+
+            } catch (Exception e) {
+                Log.e("send", "이미지 전송 중 오류: " + e.getMessage());
+            }
+        }).start();
     }
 
 
@@ -824,6 +889,12 @@ public class MainActivity extends AppCompatActivity implements TextureView.Surfa
                 final List<YoloImageProcessor.Detection> detections = imageProcessor.processImage(bitmap);
                 final List<SimpleTracker.TrackedObject> trackedObjects = tracker.update(detections);
 
+                Bitmap workingCopy = bitmap.copy(bitmap.getConfig(), true);
+                sendImageToServer(workingCopy,trackedObjects);
+                //final Bitmap resultBitmap = drawMultipleBoxOptions(resizedBitmap, trackedObjects);
+
+
+
                 // 오버레이 업데이트 (원본 비트맵은 변경하지 않음)
                 updateCameraOverlay(trackedObjects);
 
@@ -862,6 +933,96 @@ public class MainActivity extends AppCompatActivity implements TextureView.Surfa
         } else {
             isProcessingFrame = false;
         }
+    }
+
+
+    private Bitmap drawDetectionsDirectly(Bitmap bitmap, List<SimpleTracker.TrackedObject> trackedObjects) {
+        // 원본 이미지를 변형하지 않기 위해 복사본 생성
+        Bitmap mutableBitmap = bitmap.copy(Bitmap.Config.ARGB_8888, true);
+        Canvas canvas = new Canvas(mutableBitmap);
+
+        // 여기서는 기존의 drawMultipleBoxOptions 메서드와 비슷한 로직 사용
+        // 바운딩 박스, 텍스트 등을 그림
+
+        // 다양한 스케일 옵션 정의
+        float[] scaleOptions = {1.0f};
+
+        // 페인트 객체 생성
+        Paint boxPaint = new Paint();
+        boxPaint.setStyle(Paint.Style.STROKE);
+        boxPaint.setStrokeWidth(4);
+        boxPaint.setColor(Color.RED);
+
+        // 텍스트 그리기 위한 Paint 객체
+        Paint textPaint = new Paint();
+        textPaint.setColor(Color.WHITE);
+        textPaint.setTextSize(30);
+        textPaint.setAntiAlias(true);
+
+        // 텍스트 배경 Paint 객체
+        Paint textBackgroundPaint = new Paint();
+        textBackgroundPaint.setColor(Color.BLACK);
+        textBackgroundPaint.setAlpha(180);
+
+        // 가상 선 그리기 (옵션)
+        Paint linePaint = new Paint();
+        linePaint.setColor(Color.MAGENTA);
+        linePaint.setStrokeWidth(5);
+        linePaint.setStyle(Paint.Style.STROKE);
+        linePaint.setPathEffect(new DashPathEffect(new float[] {20, 10}, 0)); // 점선 효과
+
+        int imageWidth = bitmap.getWidth();
+        int imageHeight = bitmap.getHeight();
+
+        // 가상 선 그리기
+        float scaledStartX = virtualLineStartX * imageWidth / 640f;
+        float scaledStartY = virtualLineStartY * imageHeight / 640f;
+        float scaledEndX = virtualLineEndX * imageWidth / 640f;
+        float scaledEndY = virtualLineEndY * imageHeight / 640f;
+
+        canvas.drawLine(scaledStartX, scaledStartY, scaledEndX, scaledEndY, linePaint);
+
+        // 모든 추적 객체에 대해 처리
+        for (SimpleTracker.TrackedObject obj : trackedObjects) {
+            if (obj.getConfidence() >= 0.7f) {
+                // 바운딩 박스 좌표
+                float left = obj.getLeft();
+                float top = obj.getTop();
+                float right = obj.getRight();
+                float bottom = obj.getBottom();
+
+                // 이미지 경계 내로 제한
+                left = Math.max(0, Math.min(left, imageWidth));
+                top = Math.max(0, Math.min(top, imageHeight));
+                right = Math.max(0, Math.min(right, imageWidth));
+                bottom = Math.max(0, Math.min(bottom, imageHeight));
+
+                // ID에 따라 색상 변경
+                boxPaint.setColor(getColorForId(obj.getId()));
+
+                // 바운딩 박스 그리기
+                canvas.drawRect(left, top, right, bottom, boxPaint);
+
+                // 객체 정보 텍스트 그리기
+                String labelText = "ID " + obj.getId() + ": " + obj.getLabel() +
+                        " (" + String.format("%.1f", obj.getConfidence() * 100) + "%)";
+
+                Rect textBounds = new Rect();
+                textPaint.getTextBounds(labelText, 0, labelText.length(), textBounds);
+
+                canvas.drawRect(
+                        left,
+                        top - textBounds.height() - 5,
+                        left + textBounds.width() + 10,
+                        top,
+                        textBackgroundPaint
+                );
+
+                canvas.drawText(labelText, left + 5, top - 2, textPaint);
+            }
+        }
+
+        return mutableBitmap;
     }
 
     // 오버레이 업데이트 메서드 개선
