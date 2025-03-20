@@ -12,12 +12,7 @@
         android:layout_alignParentTop="true"
         android:orientation="horizontal">
 
-        <Button
-            android:id="@+id/btnSelectImage"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text="이미지 선택" />
+
 
         <Button
             android:id="@+id/btnStartCamera"

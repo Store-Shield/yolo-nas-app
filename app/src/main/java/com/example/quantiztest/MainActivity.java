@@ -2,7 +2,6 @@ package com.example.quantiztest;
 
 import android.Manifest;
 import android.annotation.SuppressLint;
-import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
@@ -20,12 +19,9 @@ import android.hardware.camera2.CameraDevice;
 import android.hardware.camera2.CameraManager;
 import android.hardware.camera2.CaptureRequest;
 import android.hardware.camera2.params.StreamConfigurationMap;
-import android.media.ImageReader;
-import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.HandlerThread;
-import android.provider.MediaStore;
 import android.util.Base64;
 import android.util.Log;
 import android.util.Size;
@@ -40,17 +36,15 @@ import android.widget.ImageView;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import androidx.activity.result.ActivityResultLauncher;
-import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.ByteArrayOutputStream;
-import java.io.IOException;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -63,12 +57,6 @@ import java.util.concurrent.TimeUnit;
 
 import io.socket.client.IO;
 import io.socket.client.Socket;
-import okhttp3.MediaType;
-import okhttp3.OkHttpClient;
-import okhttp3.Request;
-import okhttp3.RequestBody;
-import okhttp3.Response;
-import okhttp3.WebSocket;
 
 
 /**
@@ -103,7 +91,7 @@ public class MainActivity extends AppCompatActivity implements TextureView.Surfa
     private YoloImageProcessor imageProcessor;
 
     // UI 요소들
-    private Button btnSelectImage;    // 이미지 선택 버튼
+      // 이미지 선택 버튼
     private Button btnStartCamera;    // 카메라 시작 버튼
 
     //TextureView는 실시간 화면이 나오도록하는것!!
@@ -112,8 +100,6 @@ public class MainActivity extends AppCompatActivity implements TextureView.Surfa
     private TextView tvResult;        // 탐지 결과를 표시할 TextView
     private SurfaceView overlayView;
     private SurfaceHolder overlayHolder;
-    // 갤러리에서 이미지를 선택하기 위한 ActivityResultLauncher
-    private ActivityResultLauncher<Intent> imagePickerLauncher;
 
     // 카메라 관련 변수
     private String cameraId;
@@ -121,18 +107,20 @@ public class MainActivity extends AppCompatActivity implements TextureView.Surfa
     private CameraCaptureSession cameraCaptureSession;
     private CaptureRequest.Builder captureRequestBuilder;
     private Size imageDimension;
-    private ImageReader imageReader;
     private Handler backgroundHandler;
     private HandlerThread backgroundThread;
     private Semaphore cameraOpenCloseLock = new Semaphore(1);
     private boolean isProcessingFrame = false;
     private boolean isCameraMode = false;
-
-    private WebSocket webSocket;
-    private boolean isWebSocketConnected = false;
-
-
+    //ip변경부분
+    final String connectUrl="https://d3eb-223-194-132-11.ngrok-free.app";
     private Socket mSocket;
+
+    // 지금까지 본 모든 사람 ID들
+    private Map<Integer, Integer> personIdCountMap = new HashMap<>(); // 사람 ID와 미싱 카운트를 저장
+    private static final int DISAPPEARANCE_THRESHOLD = 10; // 약 2초 (100ms 간격으로 20프레임)
+
+
     /**
      * 액티비티가 생성될 때 호출되는 메서드
      * UI 초기화, 권한 확인, 모델 로딩 등 초기 설정을 수행합니다.
@@ -183,7 +171,7 @@ public class MainActivity extends AppCompatActivity implements TextureView.Surfa
         setupSocket();
 
         // UI 요소 초기화 - ID로 뷰 찾기
-        btnSelectImage = findViewById(R.id.btnSelectImage);
+
         btnStartCamera = findViewById(R.id.btnStartCamera);
         textureView = findViewById(R.id.textureView);
         imageView = findViewById(R.id.imageView);
@@ -237,27 +225,6 @@ public class MainActivity extends AppCompatActivity implements TextureView.Surfa
             Toast.makeText(this, "모델 로드 실패!", Toast.LENGTH_SHORT).show();
         }
 
-        // 이미지 선택 결과를 처리하기 위한 ActivityResultLauncher 초기화
-        imagePickerLauncher = registerForActivityResult(
-                new ActivityResultContracts.StartActivityForResult(),
-                result -> {
-                    // 결과가 OK이고 데이터가 있는 경우
-                    if (result.getResultCode() == RESULT_OK && result.getData() != null) {
-                        // 선택된 이미지의 Uri 가져오기
-                        Uri selectedImageUri = result.getData().getData();
-                        // 선택된 이미지 처리
-                        handleSelectedImage(selectedImageUri);
-                    }
-                });
-
-        // 이미지 선택 버튼 클릭 이벤트 설정
-        btnSelectImage.setOnClickListener(v -> {
-            if (isCameraMode) {
-                // 카메라 모드일 경우 카메라 중지하고 갤러리 모드로 전환
-                stopCamera();
-            }
-            openImagePicker();
-        });
 
         // 카메라 시작 버튼 클릭 이벤트 설정
         btnStartCamera.setOnClickListener(v -> {
@@ -276,12 +243,12 @@ public class MainActivity extends AppCompatActivity implements TextureView.Surfa
 //웹소켓
 private void setupSocket() {
     try {
-        mSocket = IO.socket("http://172.30.1.79:5005");  // Socket.IO 서버 URL
+        mSocket = IO.socket(connectUrl);  // Socket.IO 서버 URL
     } catch (Exception e) {
         e.printStackTrace();
     }
     mSocket.connect();  // 연결 시작
-
+    Log.d("socket", "웹소켓 연결시도");
     // 연결 성공 시
     mSocket.on(Socket.EVENT_CONNECT, args -> {
         Log.d("socket", "웹소켓 연결 성공");
@@ -359,167 +326,7 @@ private void setupSocket() {
             }
         }
     }
-
-    /**
-     * 갤러리에서 이미지를 선택하기 위한 인텐트를 실행하는 메서드
-     */
-    private void openImagePicker() {
-        // 갤러리 열기 인텐트 생성 - ACTION_PICK 액션과 이미지 미디어 URI 사용
-        Intent intent = new Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI);
-        // 인텐트 실행 (결과는 imagePickerLauncher에서 처리)
-        imagePickerLauncher.launch(intent);
-    }
-
-    /**
-     * 선택된 이미지를 처리하는 메서드
-     * @param imageUri 선택된 이미지의 URI
-     */
-    private void handleSelectedImage(Uri imageUri) {
-        try {
-            // URI에서 비트맵 이미지 로드
-            Bitmap bitmap = MediaStore.Images.Media.getBitmap(getContentResolver(), imageUri);
-            // 이미지뷰에 선택된 이미지 표시
-            imageView.setImageBitmap(bitmap);
-
-            // 이미지뷰 표시, 텍스처뷰 숨김
-            textureView.setVisibility(View.GONE);
-            imageView.setVisibility(View.VISIBLE);
-
-            // 로드된 이미지를 객체 탐지를 위해 처리
-            processImage(bitmap);
-        } catch (IOException e) {
-            // 이미지 로드 실패 시 로그 출력 및 사용자에게 알림
-            Log.e(TAG, "이미지 로드 중 오류 발생: " + e.getMessage());
-            Toast.makeText(this, "이미지를 로드할 수 없습니다.", Toast.LENGTH_SHORT).show();
-        }
-    }
-
-    /**
-     * 이미지를 처리하고 객체 탐지를 수행하는 메서드
-     * @param bitmap 처리할 비트맵 이미지
-     */
-
-    //갤러리때 사용
-    private void processImage(Bitmap bitmap) {
-        if (imageProcessor != null) {
-            tvResult.setText("분석 중...");
-
-            new Thread(() -> {
-                if (bitmap != null) {
-                    // 입력 이미지를 640x640으로 리사이징
-                    Bitmap resizedBitmap = Bitmap.createScaledBitmap(bitmap, 640, 640, true);
-
-                    // 객체 탐지 및 추적 수행
-                    final List<YoloImageProcessor.Detection> detections = imageProcessor.processImage(resizedBitmap);
-                    final List<SimpleTracker.TrackedObject> trackedObjects = tracker.update(detections);
-                    Bitmap workingCopy = bitmap.copy(bitmap.getConfig(), true);
-                    sendImageToServer(workingCopy,trackedObjects);
-                    final Bitmap resultBitmap = drawMultipleBoxOptions(resizedBitmap, trackedObjects);
-
-
-
-                    // UI 스레드에서 결과 표시
-                    runOnUiThread(() -> {
-                        if (trackedObjects.isEmpty()) {
-                            tvResult.setText("객체를 찾을 수 없습니다.");
-                        } else {
-                            // 결과 텍스트 구성
-                            StringBuilder resultTextBuilder = new StringBuilder();
-                            resultTextBuilder.append("추적 중인 객체: ").append(trackedObjects.size()).append("개\n");
-
-                            for (SimpleTracker.TrackedObject obj : trackedObjects) {
-                                if (obj.getConfidence() >= 0.7f) {
-                                    resultTextBuilder.append("ID ").append(obj.getId())
-                                            .append(": ").append(obj.getLabel())
-                                            .append(" (").append(String.format("%.1f", obj.getConfidence() * 100))
-                                            .append("%)\n");
-                                }
-                            }
-
-                            imageView.setScaleType(ImageView.ScaleType.FIT_CENTER);
-                            imageView.setImageBitmap(resultBitmap);//추가
-                            tvResult.setText(resultTextBuilder.toString());
-                        }
-
-
-                        // 여기가 중요: imageView의 scaleType을 CENTER로 변경
-                        imageView.setScaleType(ImageView.ScaleType.FIT_XY);
-                        // 또는 실제 크기 그대로 표시하려면:
-                        // imageView.setScaleType(ImageView.ScaleType.MATRIX);
-
-                        // 결과 이미지 표시
-                        imageView.setImageBitmap(resultBitmap);
-                        imageView.setVisibility(View.VISIBLE);
-
-                        // 갤러리 모드에서는 textureView 숨기기
-                        if (!isCameraMode) {
-                            textureView.setVisibility(View.GONE);
-                        }
-
-                        // 다음 프레임 처리 가능하도록 플래그 설정
-                        isProcessingFrame = false;
-                    });
-
-                    // 원본 리사이즈 비트맵 해제 (결과 비트맵은 화면에 표시되므로 해제하지 않음)
-                    resizedBitmap.recycle();
-                }
-            }).start();
-        } else {
-            tvResult.setText("이미지 프로세서를 초기화할 수 없습니다.");
-        }
-    }
-    private void sendImageToServer(Bitmap bitmap,List<SimpleTracker.TrackedObject> trackedObjects) {
-        new Thread(() -> {
-
-            Bitmap drawBitmap=drawDetectionsDirectly(bitmap,trackedObjects);
-            //Bitmap resizedBitmap = Bitmap.createScaledBitmap(drawBitmap, 320, 640, true);
-
-
-
-            OkHttpClient client = new OkHttpClient.Builder()
-                    .connectTimeout(30, TimeUnit.SECONDS)
-                    .writeTimeout(30, TimeUnit.SECONDS)
-                    .readTimeout(30, TimeUnit.SECONDS)
-                    .build();
-
-            try {
-                // 비트맵을 Base64로 변환
-                ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
-                drawBitmap.compress(Bitmap.CompressFormat.JPEG, 90, byteArrayOutputStream);
-                byte[] byteArray = byteArrayOutputStream.toByteArray();
-                String base64Image = Base64.encodeToString(byteArray, Base64.DEFAULT);
-
-                // JSON 데이터 준비
-                JSONObject postData = new JSONObject();
-                postData.put("image", base64Image);
-
-                // 요청 생성
-                RequestBody body = RequestBody.create(
-                        MediaType.parse("application/json"), postData.toString());
-
-                //ip변경 https -> http로 문제 해결
-                Request request = new Request.Builder()
-                        .url("http://da02-175-214-112-154.ngrok-free.app/receive_image")
-                        .post(body)
-                        .build();
-
-                // 요청 전송
-                Response response = client.newCall(request).execute();
-
-
-
-                if (response.isSuccessful()) {
-                    Log.d("send", "서버로 이미지 전송 성공");
-                } else {
-                    Log.e("send", "서버 응답 오류: " + response.code());
-                }
-
-            } catch (Exception e) {
-                Log.e("send", "이미지 전송 중 오류: " + e.getMessage());
-            }
-        }).start();
-    }
-
+    //1)이미지 전송
     private void sendImageViaWebSocket(Bitmap bitmap) {
         new Thread(() -> {
             try {
@@ -554,136 +361,72 @@ private void setupSocket() {
                 // 이미지 데이터 전송
 
                 mSocket.emit("message", imageData.toString());//mSocket이용하여 데이터 전송
-
+                Log.d("socket","이미지 전송 완료");
             } catch (Exception e) {
                 Log.e("socket", "웹소켓 이미지 전송 중 오류: " + e.getMessage());
                 e.printStackTrace(); // 상세 스택 트레이스 출력
             }
         }).start();
     }
-//test~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~```
-    private Bitmap drawMultipleBoxOptions(Bitmap bitmap, List<SimpleTracker.TrackedObject> trackedObjects) {
-        // 원본 이미지를 변형하지 않기 위해 복사본 생성
-        Bitmap mutableBitmap = bitmap.copy(Bitmap.Config.ARGB_8888, true);
-        Canvas canvas = new Canvas(mutableBitmap);
+    //2)person이벤트전송 : (사람이 탐지될 때, 사람의 id를 전송하기)
+    // 새로 등장한 사람 이벤트 전송
+    private void sendPersonAppearanceEvent(Set<Integer> newPersonIds) {
+        try {
+            // 이벤트 데이터 JSON 구성
+            JSONObject eventData = new JSONObject();
+            eventData.put("type", "personAppearance");
+            eventData.put("timestamp", System.currentTimeMillis());
 
-        int imageWidth = bitmap.getWidth();  // 640
-        int imageHeight = bitmap.getHeight(); // 640
-
-        // 다양한 스케일 옵션 정의
-        float[] scaleOptions = {1.0f, 2.0f, 3.0f, 4.0f};
-
-        // 각 스케일 옵션에 따른 페인트 객체 생성 (색상 구분)
-        Paint[] boxPaints = new Paint[scaleOptions.length];
-        for (int i = 0; i < scaleOptions.length; i++) {
-            boxPaints[i] = new Paint();
-            boxPaints[i].setStyle(Paint.Style.STROKE);
-            boxPaints[i].setStrokeWidth(2);
-
-            // 각 스케일 옵션별로 다른 색상 사용
-            switch (i) {
-                case 0: boxPaints[i].setColor(Color.RED); break;     // 스케일 1.0
-                case 1: boxPaints[i].setColor(Color.GREEN); break;   // 스케일 2.0
-                case 2: boxPaints[i].setColor(Color.BLUE); break;    // 스케일 3.0
-                case 3: boxPaints[i].setColor(Color.YELLOW); break;  // 스케일 4.0
+            // 새로 등장한 사람들의 정보 배열 생성
+            JSONArray personsArray = new JSONArray();
+            for (Integer id : newPersonIds) {
+                personsArray.put(id);  // 직접 ID 값만 추가
             }
-        }
-
-        // 텍스트 그리기 위한 Paint 객체
-        Paint textPaint = new Paint();
-        textPaint.setColor(Color.WHITE);
-        textPaint.setTextSize(20);
-        textPaint.setAntiAlias(true);
-
-        // 텍스트 배경 Paint 객체
-        Paint textBackgroundPaint = new Paint();
-        textBackgroundPaint.setColor(Color.BLACK);
-        textBackgroundPaint.setAlpha(180);
-
-        // 모든 추적 객체에 대해 처리
-        for (SimpleTracker.TrackedObject obj : trackedObjects) {
-            if (obj.getConfidence() >= 0.7f) {
-                // 원본 좌표 가져오기
-                float originalX1 = obj.getLeft() / imageWidth;  // 정규화된 x1 좌표로 변환
-                float originalY1 = obj.getTop() / imageHeight;  // 정규화된 y1 좌표로 변환
-                float originalX2 = obj.getRight() / imageWidth; // 정규화된 x2 좌표로 변환
-                float originalY2 = obj.getBottom() / imageHeight; // 정규화된 y2 좌표로 변환
-
-                Log.d(TAG, "객체 " + obj.getId() + " 정규화된 좌표: " +
-                        originalX1 + "," + originalY1 + "," + originalX2 + "," + originalY2);
-
-                // 네 가지 서로 다른 바운딩 박스 그리기 방법 적용
-
-                // 1. 방법 1: 직접 변환 (스케일 적용 없음)
-                float left1 = obj.getLeft();
-                float top1 = obj.getTop();
-                float right1 = obj.getRight();
-                float bottom1 = obj.getBottom();
-
-                // 이미지 경계 내로 제한
-                left1 = Math.max(0, Math.min(left1, imageWidth));
-                top1 = Math.max(0, Math.min(top1, imageHeight));
-                right1 = Math.max(0, Math.min(right1, imageWidth));
-                bottom1 = Math.max(0, Math.min(bottom1, imageHeight));
-
-                canvas.drawRect(left1, top1, right1, bottom1, boxPaints[0]);
-
-
-                // 객체 정보 텍스트 그리기
-                String labelText = "ID " + obj.getId() + ": " + obj.getLabel() +
-                        " (" + String.format("%.1f", obj.getConfidence() * 100) + "%)";
-
-                Rect textBounds = new Rect();
-                textPaint.getTextBounds(labelText, 0, labelText.length(), textBounds);
-
-                canvas.drawRect(
-                        left1,
-                        top1 - textBounds.height() - 5,
-                        left1 + textBounds.width() + 10,
-                        top1,
-                        textBackgroundPaint
-                );
-
-                canvas.drawText(labelText, left1 + 5, top1 - 2, textPaint);
-
-                // 범례 그리기 (어떤 색상이 어떤 방법인지)
-                drawLegend(canvas, scaleOptions, boxPaints);
+            eventData.put("personIds", personsArray);  // 키 이름도 일관성 있게 변경
+            /*
+            {
+                    "type": "personAppearance",
+                    "timestamp": 1711012345678,
+                    "personsIds": [3,5]
             }
-        }
+            */
+            // 이벤트 데이터 전송
+            mSocket.emit("message", eventData.toString());
+            Log.d("socket", "사람 등장 이벤트 전송: " + eventData.toString());
 
-        return mutableBitmap;
+        } catch (Exception e) {
+            Log.e("socket", "웹소켓 이벤트 전송 중 오류: " + e.getMessage());
+            e.printStackTrace();
+        }
     }
 
-    // 범례를 그리는 메서드
-    private void drawLegend(Canvas canvas, float[] scaleOptions, Paint[] paints) {
-        Paint textPaint = new Paint();
-        textPaint.setColor(Color.WHITE);
-        textPaint.setTextSize(16);
-        textPaint.setAntiAlias(true);
+    // 사라진 사람 이벤트 전송
+    private void sendPersonDisappearanceEvent(Set<Integer> disappearedIds) {
+        try {
+            // 이벤트 데이터 JSON 구성
+            JSONObject eventData = new JSONObject();
+            eventData.put("type", "personDisappearance");
+            eventData.put("timestamp", System.currentTimeMillis());
 
-        Paint bgPaint = new Paint();
-        bgPaint.setColor(Color.BLACK);
-        bgPaint.setAlpha(200);
+            // 사라진 사람들의 ID 배열 생성
+            JSONArray idsArray = new JSONArray();
+            for (Integer id : disappearedIds) {
+                idsArray.put(id);
+            }
+            eventData.put("personIds", idsArray);
 
-        // 범례 배경
-        canvas.drawRect(10, 10, 200, 130, bgPaint);
+            // 이벤트 데이터 전송
+            mSocket.emit("message", eventData.toString());
+            Log.d("socket", "사람 사라짐 이벤트 전송: " + eventData.toString());
 
-        // 각 방법별 설명
-        String[] methods = {
-                "방법 1: 직접 좌표 (빨강)",
-                "방법 2: 중심점+크기 (초록)",
-                "방법 3: 역변환 (파랑)",
-                "방법 4: 비율유지 (노랑)"
-        };
-
-        for (int i = 0; i < methods.length; i++) {
-            // 색상 샘플
-            canvas.drawRect(20, 25 + i * 25, 35, 40 + i * 25, paints[i]);
-
-            // 설명 텍스트
-            canvas.drawText(methods[i], 45, 35 + i * 25, textPaint);
+        } catch (Exception e) {
+            Log.e("socket", "웹소켓 이벤트 전송 중 오류: " + e.getMessage());
+            e.printStackTrace();
         }
     }
+
+    //3)action이벤트 전송 : (특정 사람이 무엇을 집거나/놓았을 때 전송하기)
+
 
     //색깔지정
     private int getColorForId(int id) {
@@ -936,10 +679,6 @@ private void setupSocket() {
                     if (isCameraMode && !isProcessingFrame) {
                         isProcessingFrame = true;
 
-
-                        //수정한부분 : 여기서 주기적으로 이미지만!! 전달하는것
-                        //sendImageViaWebSocket(textureView.getBitmap());
-                        // 현재 프리뷰 프레임을 비트맵으로 변환하여 객체 탐지
                         runOnUiThread(() -> {
                             if (textureView.isAvailable()) {
                                 Bitmap bitmap = textureView.getBitmap();
@@ -957,7 +696,7 @@ private void setupSocket() {
 
                     // 다음 프레임 처리 예약 (더 짧은 간격으로 처리 가능)
                     if (backgroundHandler != null) {
-                        backgroundHandler.postDelayed(this, 100); // 100ms 간격으로 수정
+                        backgroundHandler.postDelayed(this, 50); // 100ms 간격으로 수정
                     }
                 }
             });
@@ -977,8 +716,69 @@ private void setupSocket() {
 
                 Bitmap workingCopy = bitmap.copy(bitmap.getConfig(), true);
                 final Bitmap resultBitmap = drawDetectionsDirectly(workingCopy, trackedObjects);
+
                 sendImageViaWebSocket(resultBitmap);
 
+                // 현재 프레임에서 감지된 사람 ID 수집
+                Set<Integer> currentPersonIds = new HashSet<>();
+                for (SimpleTracker.TrackedObject obj : trackedObjects) {
+                    if (obj.getConfidence() >= 0.7f && "person".equals(obj.getLabel())) {
+                        currentPersonIds.add(obj.getId());
+                    }
+                }
+                // 로깅
+                Log.d("person", "현재 프레임 사람들: " + currentPersonIds);
+                Log.d("person", "기존 관리 중인 사람들: " + personIdCountMap.keySet());
+
+                // 1. 현재 프레임에 있는 사람 처리
+                Set<Integer> newPersons = new HashSet<>();
+                for (Integer id : currentPersonIds) {
+                    if (personIdCountMap.containsKey(id)) {
+                        // 기존에 있던 사람은 카운트 초기화
+                        personIdCountMap.put(id, 0);
+                    } else {
+                        // 새로 등장한 사람
+                        newPersons.add(id);
+                        personIdCountMap.put(id, 0);
+                    }
+                }
+
+                // 새 사람 등장 이벤트 발생
+                if (!newPersons.isEmpty()) {
+                    sendPersonAppearanceEvent(newPersons);
+                    Log.d("person", "새로 등장한 사람들: " + newPersons);
+                }
+
+                // 2. 현재 프레임에 없는 사람 처리 (카운트 증가)
+                Set<Integer> missingPersons = new HashSet<>(personIdCountMap.keySet());
+                missingPersons.removeAll(currentPersonIds);
+
+                // 사라진 사람들의 카운트 증가
+                for (Integer id : missingPersons) {
+                    int count = personIdCountMap.get(id);
+                    count++;
+                    personIdCountMap.put(id, count);
+                    Log.d("person", "사람 ID " + id + " 카운트 증가: " + count);
+                }
+
+                // 3. 임계값 초과한 사람 확인 (실제로 사라진 사람)
+                Set<Integer> actuallyDisappeared = new HashSet<>();
+                for (Map.Entry<Integer, Integer> entry : personIdCountMap.entrySet()) {
+                    if (entry.getValue() >= DISAPPEARANCE_THRESHOLD) {
+                        actuallyDisappeared.add(entry.getKey());
+                    }
+                }
+
+                // 사라짐 이벤트 발생 및 목록에서 제거
+                if (!actuallyDisappeared.isEmpty()) {
+                    sendPersonDisappearanceEvent(actuallyDisappeared);
+                    Log.d("person", "실제로 사라진 사람들: " + actuallyDisappeared);
+
+                    // 사라진 사람은 목록에서 제거
+                    for (Integer id : actuallyDisappeared) {
+                        personIdCountMap.remove(id);
+                    }
+                }
 
                 // 오버레이 업데이트 (원본 비트맵은 변경하지 않음)
                 updateCameraOverlay(trackedObjects);
@@ -1144,10 +944,10 @@ private void setupSocket() {
 
                     // 바운딩 박스 그리기
                     drawBoundingBoxesOnCanvas(canvas, trackedObjects);
-
-
                     // 가상 선과의 교차 감지
                     detectLineCrossing(trackedObjects, canvasWidth, canvasHeight);
+
+
                 } finally {
                     overlayHolder.unlockCanvasAndPost(canvas);
                 }
@@ -1234,6 +1034,20 @@ private void setupSocket() {
                                     personId,
                                     wasAbove == false && isAbove == true ? " 내려놓았습니다" : " 집었습니다",
                                     personDistance);
+
+
+                        try {
+                            JSONObject actionEventData = new JSONObject();
+                            actionEventData.put("type", "action");
+                            actionEventData.put("personId", personId);
+                            actionEventData.put("object", obj.getLabel());
+                            actionEventData.put("act", wasAbove == false && isAbove == true ? 0 : 1);
+                            // 0 이면 -> 내려놓기 1이면 -> 집기*****
+                            mSocket.emit("message", actionEventData.toString());
+                        }catch (Exception e){
+
+                        }
+
                         }
 
                         // 이벤트 텍스트 생성
