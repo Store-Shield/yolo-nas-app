@@ -113,12 +113,18 @@ public class MainActivity extends AppCompatActivity implements TextureView.Surfa
     private boolean isProcessingFrame = false;
     private boolean isCameraMode = false;
     //ip변경부분
-    final String connectUrl="https://d3eb-223-194-132-11.ngrok-free.app";
+    final String connectUrl="https://ab03-175-214-112-154.ngrok-free.app";
     private Socket mSocket;
 
     // 지금까지 본 모든 사람 ID들
     private Map<Integer, Integer> personIdCountMap = new HashMap<>(); // 사람 ID와 미싱 카운트를 저장
     private static final int DISAPPEARANCE_THRESHOLD = 10; // 약 2초 (100ms 간격으로 20프레임)
+
+
+
+    // 키오스크 영역 관련 변수 (대각선 가상 선 관련 변수 아래 부분에 추가)
+    private float kioskLeft, kioskTop, kioskRight, kioskBottom; // 키오스크 영역 좌표
+    private boolean showKioskArea = true; // 키오스크 영역 표시 여부
 
 
     /**
@@ -161,6 +167,15 @@ public class MainActivity extends AppCompatActivity implements TextureView.Surfa
         virtualLineStartY = 550;
         virtualLineEndX = 0;
         virtualLineEndY = 550;
+
+
+        // 키오스크 영역 초기화 (640x640 기준)
+        kioskLeft = 30;
+        kioskTop = 70;
+        kioskRight = 100;
+        kioskBottom = 140;
+
+
 // 객체 추적 맵 초기화
         previousDistanceToLine = new HashMap<>();
         lastEventTime = new HashMap<>();
@@ -270,6 +285,21 @@ private void setupSocket() {
     // 메시지 수신
     mSocket.on("response", args -> {
         Log.d("socket", "서버로부터 메시지 수신: " + args[0].toString());
+    });
+
+
+    // 가장 가까운 사람 찾기 요청 처리
+    mSocket.on("find_nearest_person", args -> {
+        try {
+            JSONObject data = new JSONObject(args[0].toString());
+            String kioskId = data.getString("kioskId");
+            Log.d("socket", "키오스크 " + kioskId + "에서 가장 가까운 사람 찾기 요청 수신");
+
+            // 현재 프레임에서 키오스크에 가장 가까운 사람 찾기 요청
+            findNearestPersonToKiosk();
+        } catch (Exception e) {
+            Log.e("socket", "가장 가까운 사람 찾기 요청 처리 오류: " + e.getMessage());
+        }
     });
 }
 
@@ -866,6 +896,49 @@ private void setupSocket() {
         float scaledEndY = virtualLineEndY * imageHeight / 640f;
 
         canvas.drawLine(scaledStartX, scaledStartY, scaledEndX, scaledEndY, linePaint);
+        // 키오스크 영역 그리기
+        if (showKioskArea) {
+            Paint kioskPaint = new Paint();
+            kioskPaint.setStyle(Paint.Style.STROKE);
+            kioskPaint.setStrokeWidth(10);
+            kioskPaint.setColor(Color.GREEN);
+
+            // 캔버스 크기에 맞게 키오스크 좌표 변환
+            float canvasKioskLeft = kioskLeft * imageWidth / 640f;
+            float canvasKioskTop = kioskTop * imageHeight / 640f;
+            float canvasKioskRight = kioskRight * imageWidth / 640f;
+            float canvasKioskBottom = kioskBottom * imageHeight / 640f;
+
+            // 키오스크 영역 그리기
+            canvas.drawRect(canvasKioskLeft, canvasKioskTop, canvasKioskRight, canvasKioskBottom, kioskPaint);
+
+            // 키오스크 라벨 그리기
+            Paint kioskTextPaint = new Paint();
+            kioskTextPaint.setColor(Color.GREEN);
+            kioskTextPaint.setTextSize(40);
+            kioskTextPaint.setAntiAlias(true);
+
+            // 키오스크 라벨 배경
+            Paint kioskTextBgPaint = new Paint();
+            kioskTextBgPaint.setColor(Color.BLACK);
+            kioskTextBgPaint.setAlpha(180);
+
+            String kioskLabel = "키오스크";
+            Rect textBounds = new Rect();
+            kioskTextPaint.getTextBounds(kioskLabel, 0, kioskLabel.length(), textBounds);
+
+            canvas.drawRect(
+                    canvasKioskLeft,
+                    canvasKioskTop - textBounds.height() - 10,
+                    canvasKioskLeft + textBounds.width() + 20,
+                    canvasKioskTop,
+                    kioskTextBgPaint
+            );
+
+            canvas.drawText(kioskLabel, canvasKioskLeft + 10, canvasKioskTop - 5, kioskTextPaint);
+        }
+
+
 
         // 모든 추적 객체에 대해 처리
         for (SimpleTracker.TrackedObject obj : trackedObjects) {
@@ -939,7 +1012,47 @@ private void setupSocket() {
                     float scaledEndY = virtualLineEndY * canvasHeight / 640f;
 
                     canvas.drawLine(scaledStartX, scaledStartY, scaledEndX, scaledEndY, linePaint);
+                    // 키오스크 영역 그리기
+                    if (showKioskArea) {
+                        Paint kioskPaint = new Paint();
+                        kioskPaint.setStyle(Paint.Style.STROKE);
+                        kioskPaint.setStrokeWidth(10);
+                        kioskPaint.setColor(Color.GREEN);
 
+                        // 캔버스 크기에 맞게 키오스크 좌표 변환
+                        float canvasKioskLeft = kioskLeft * canvasWidth / 640f;
+                        float canvasKioskTop = kioskTop * canvasHeight / 640f;
+                        float canvasKioskRight = kioskRight * canvasWidth / 640f;
+                        float canvasKioskBottom = kioskBottom * canvasHeight / 640f;
+
+                        // 키오스크 영역 그리기
+                        canvas.drawRect(canvasKioskLeft, canvasKioskTop, canvasKioskRight, canvasKioskBottom, kioskPaint);
+
+                        // 키오스크 라벨 그리기
+                        Paint kioskTextPaint = new Paint();
+                        kioskTextPaint.setColor(Color.GREEN);
+                        kioskTextPaint.setTextSize(40);
+                        kioskTextPaint.setAntiAlias(true);
+
+                        // 키오스크 라벨 배경
+                        Paint kioskTextBgPaint = new Paint();
+                        kioskTextBgPaint.setColor(Color.BLACK);
+                        kioskTextBgPaint.setAlpha(180);
+
+                        String kioskLabel = "키오스크";
+                        Rect textBounds = new Rect();
+                        kioskTextPaint.getTextBounds(kioskLabel, 0, kioskLabel.length(), textBounds);
+
+                        canvas.drawRect(
+                                canvasKioskLeft,
+                                canvasKioskTop - textBounds.height() - 10,
+                                canvasKioskLeft + textBounds.width() + 20,
+                                canvasKioskTop,
+                                kioskTextBgPaint
+                        );
+
+                        canvas.drawText(kioskLabel, canvasKioskLeft + 10, canvasKioskTop - 5, kioskTextPaint);
+                    }
 
 
                     // 바운딩 박스 그리기
@@ -1084,6 +1197,87 @@ private void setupSocket() {
 
         // 오래된 객체 데이터 정리
         cleanupOldObjects(trackedObjects);
+    }
+
+    private void findNearestPersonToKiosk() {
+        new Thread(() -> {
+            try {
+                // 최신 프레임을 기다림
+                Thread.sleep(100);
+
+                if (textureView.isAvailable()) {
+                    runOnUiThread(() -> {
+                        Bitmap bitmap = textureView.getBitmap();
+                        if (bitmap != null) {
+                            // 현재 추적 중인 객체 가져오기
+                            List<YoloImageProcessor.Detection> detections = imageProcessor.processImage(bitmap);
+                            List<SimpleTracker.TrackedObject> trackedObjects = tracker.update(detections);
+
+                            // 키오스크 영역 중심점 계산
+                            float kioskCenterX = (kioskLeft + kioskRight) / 2f;
+                            float kioskCenterY = (kioskTop + kioskBottom) / 2f;
+
+                            // 키오스크에 가장 가까운 사람 찾기
+                            SimpleTracker.TrackedObject nearestPerson = findNearestPerson(trackedObjects, kioskCenterX, kioskCenterY);
+
+                            // 결과 처리
+                            if (nearestPerson != null) {
+                                int personId = nearestPerson.getId();
+
+                                // 사람과 키오스크 간의 거리 계산
+                                float personCenterX = (nearestPerson.getLeft() + nearestPerson.getRight()) / 2f;
+                                float personCenterY = (nearestPerson.getTop() + nearestPerson.getBottom()) / 2f;
+                                float distance = calculateDistance(kioskCenterX, kioskCenterY, personCenterX, personCenterY);
+
+                                Log.d("kiosk", "키오스크에 가장 가까운 사람 ID: " + personId + ", 거리: " + distance);
+
+                                // 서버에 응답 전송
+                                try {
+                                    JSONObject responseData = new JSONObject();
+                                    responseData.put("type", "nearest_person_found");
+                                    responseData.put("personId", personId);
+                                    responseData.put("distance", distance);
+
+                                    mSocket.emit("nearest_person_found", responseData);
+
+                                    // 이벤트 표시
+                                    String eventText = "ID " + personId + ": 키오스크에서 가장 가까운 사람 감지";
+                                    runOnUiThread(() -> {
+                                        tvEvent.setText(eventText);
+                                        tvEvent.setVisibility(View.VISIBLE);
+                                        tvEvent.setBackgroundColor(Color.YELLOW);
+                                        new Handler().postDelayed(() -> {
+                                            tvEvent.setBackgroundColor(Color.parseColor("#22000000"));
+                                        }, 3000);
+                                    });
+                                } catch (Exception e) {
+                                    Log.e("kiosk", "응답 전송 오류: " + e.getMessage());
+                                }
+                            } else {
+                                // 가까운 사람이 없는 경우
+                                Log.d("kiosk", "키오스크 근처에 사람이 없습니다.");
+
+                                // 서버에 응답 전송 (사람 없음)
+                                try {
+                                    JSONObject responseData = new JSONObject();
+                                    responseData.put("type", "nearest_person_found");
+                                    responseData.put("personId", null);
+                                    responseData.put("distance", 0);
+
+                                    mSocket.emit("nearest_person_found", responseData);
+                                } catch (Exception e) {
+                                    Log.e("kiosk", "응답 전송 오류: " + e.getMessage());
+                                }
+                            }
+
+                            bitmap.recycle();
+                        }
+                    });
+                }
+            } catch (Exception e) {
+                Log.e("kiosk", "가장 가까운 사람 찾기 오류: " + e.getMessage());
+            }
+        }).start();
     }
 
     private SimpleTracker.TrackedObject findNearestPerson(List<SimpleTracker.TrackedObject> trackedObjects,
