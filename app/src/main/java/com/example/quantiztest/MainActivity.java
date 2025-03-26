@@ -113,7 +113,7 @@ public class MainActivity extends AppCompatActivity implements TextureView.Surfa
     private boolean isProcessingFrame = false;
     private boolean isCameraMode = false;
     //ip변경부분
-    final String connectUrl="https://ab03-175-214-112-154.ngrok-free.app";
+    final String connectUrl="https://889c-223-194-135-75.ngrok-free.app";
     private Socket mSocket;
 
     // 지금까지 본 모든 사람 ID들
@@ -171,9 +171,9 @@ public class MainActivity extends AppCompatActivity implements TextureView.Surfa
 
         // 키오스크 영역 초기화 (640x640 기준)
         kioskLeft = 30;
-        kioskTop = 70;
+        kioskTop = 420;
         kioskRight = 100;
-        kioskBottom = 140;
+        kioskBottom = 470;
 
 
 // 객체 추적 맵 초기화
