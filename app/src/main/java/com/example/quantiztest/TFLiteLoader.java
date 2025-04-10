@@ -17,14 +17,16 @@ import java.nio.channels.FileChannel;
 
 public class TFLiteLoader {
     private static final String TAG = "TFLiteLoader";
-    private static final String MODEL_FILE = "yolonas_quantized.tflite";
+    private  String modelName;
 
     private Interpreter tflite;
     private MappedByteBuffer tfliteModel;
     private Context context;
 
-    public TFLiteLoader(Context context) {
+    public TFLiteLoader(Context context,String modelName) {
+
         this.context = context;
+        this.modelName=modelName;
     }
 
     /**
@@ -33,7 +35,7 @@ public class TFLiteLoader {
     public boolean loadModelFromAssets() {
         Log.d(TAG, "Loading model from assets...");
         try {
-            tfliteModel = loadModelFile(context, MODEL_FILE);
+            tfliteModel = loadModelFile(context, modelName);
 
             // 인터프리터 옵션 설정
             Interpreter.Options options = new Interpreter.Options();
@@ -47,7 +49,7 @@ public class TFLiteLoader {
             tflite = new Interpreter(tfliteModel, options);
 
             // 모델 텐서 정보 출력
-            Log.d(TAG, "Model loaded successfully: " + MODEL_FILE);
+            Log.d(TAG, "Model loaded successfully: " + modelName);
             Log.d(TAG, "Model input tensor count: " + tflite.getInputTensorCount());
             Log.d(TAG, "Model output tensor count: " + tflite.getOutputTensorCount());
 

@@ -87,6 +87,7 @@ public class MainActivity extends AppCompatActivity implements TextureView.Surfa
 
     // TFLite 모델을 로드하고 관리하는 클래스 인스턴스
     private TFLiteLoader tfliteLoader;
+    private TFLiteLoader tfliteLoaderface;
     // 이미지 처리 및 객체 탐지를 담당하는 클래스 인스턴스
     private YoloImageProcessor imageProcessor;
 
@@ -113,7 +114,7 @@ public class MainActivity extends AppCompatActivity implements TextureView.Surfa
     private boolean isProcessingFrame = false;
     private boolean isCameraMode = false;
     //ip변경부분
-    final String connectUrl="https://889c-223-194-135-75.ngrok-free.app";
+    final String connectUrl="https://5047-223-194-135-52.ngrok-free.app";
     private Socket mSocket;
 
     // 지금까지 본 모든 사람 ID들
@@ -126,6 +127,9 @@ public class MainActivity extends AppCompatActivity implements TextureView.Surfa
     private float kioskLeft, kioskTop, kioskRight, kioskBottom; // 키오스크 영역 좌표
     private boolean showKioskArea = true; // 키오스크 영역 표시 여부
 
+
+    // 1. 클래스 변수 추가
+    private FaceDetector faceDetector;
 
     /**
      * 액티비티가 생성될 때 호출되는 메서드
@@ -224,20 +228,35 @@ public class MainActivity extends AppCompatActivity implements TextureView.Surfa
         checkAndRequestPermissions();
 
         // TFLite 모델 로더 인스턴스 생성
-        tfliteLoader = new TFLiteLoader(this);
+        tfliteLoader = new TFLiteLoader(this,"yolonas_quantized.tflite");
 
+
+        // TFLite 모델 로더 인스턴스 생성
+        tfliteLoaderface = new TFLiteLoader(this,"face_det_lite_quantized.tflite");
         // assets 폴더에서 모델 로드 시도
         if (tfliteLoader.loadModelFromAssets()) {
             // 모델 로드 성공 시 로그 출력 및 토스트 메시지 표시
-            Log.i(TAG, "YOLONas TFLite 모델이 성공적으로 로드되었습니다.");
-            Toast.makeText(this, "모델 로드 성공!", Toast.LENGTH_SHORT).show();
+            Log.i("yolo", "YOLONas TFLite 모델이 성공적으로 로드되었습니다.");
+            Toast.makeText(this, "yolo 모델 로드 성공!", Toast.LENGTH_SHORT).show();
 
             // 이미지 프로세서 초기화 - 로드된 인터프리터 전달
             imageProcessor = new YoloImageProcessor(this, tfliteLoader.getTfliteInterpreter());
         } else {
             // 모델 로드 실패 시 로그 출력 및 토스트 메시지 표시
             Log.e(TAG, "YOLONas TFLite 모델 로드에 실패했습니다.");
-            Toast.makeText(this, "모델 로드 실패!", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "yolo 모델 로드 실패!", Toast.LENGTH_SHORT).show();
+        }
+
+        if (tfliteLoaderface.loadModelFromAssets()) {
+            // 모델 로드 성공 시 로그 출력 및 토스트 메시지 표시
+            Log.i("face", "Face TFLite 모델이 성공적으로 로드되었습니다.");
+            Toast.makeText(this, "face 모델 로드 성공!", Toast.LENGTH_SHORT).show();
+            // FaceDetector 초기화
+            faceDetector = new FaceDetector(this, tfliteLoaderface.getTfliteInterpreter());
+        } else {
+            // 모델 로드 실패 시 로그 출력 및 토스트 메시지 표시
+            Log.e("face", "Face TFLite 모델 로드에 실패했습니다.");
+            Toast.makeText(this, "face 모델 로드 실패!", Toast.LENGTH_SHORT).show();
         }
 
 
@@ -400,27 +419,85 @@ private void setupSocket() {
     }
     //2)person이벤트전송 : (사람이 탐지될 때, 사람의 id를 전송하기)
     // 새로 등장한 사람 이벤트 전송
-    private void sendPersonAppearanceEvent(Set<Integer> newPersonIds) {
+
+    // 사람 등장 이벤트와 얼굴 이미지 전송 메서드 (수정됨)
+    private void sendPersonAppearanceEvent(Set<Integer> newPersonIds, Map<Integer, Bitmap> faceInfo) {
         try {
             // 이벤트 데이터 JSON 구성
             JSONObject eventData = new JSONObject();
             eventData.put("type", "personAppearance");
             eventData.put("timestamp", System.currentTimeMillis());
 
-            // 새로 등장한 사람들의 정보 배열 생성
+            // 사람 ID 배열 생성
             JSONArray personsArray = new JSONArray();
             for (Integer id : newPersonIds) {
-                personsArray.put(id);  // 직접 ID 값만 추가
+                personsArray.put(id);
             }
-            eventData.put("personIds", personsArray);  // 키 이름도 일관성 있게 변경
-            /*
-            {
-                    "type": "personAppearance",
-                    "timestamp": 1711012345678,
-                    "personsIds": [3,5]
+            eventData.put("personIds", personsArray);
+
+            // 얼굴 이미지 정보 추가
+            JSONObject facesObject = new JSONObject();
+
+            // 각 사람 ID에 대해 얼굴 이미지 처리
+            for (Integer personId : newPersonIds) {
+                // 해당 ID의 얼굴 이미지가 있는 경우에만 처리
+                if (faceInfo.containsKey(personId)) {
+                    Bitmap faceBitmap = faceInfo.get(personId);
+                    if (faceBitmap != null) {
+                        try {
+                            // 이미지 크기 축소 (성능 향상)
+                            Bitmap resizedBitmap = Bitmap.createScaledBitmap(
+                                    faceBitmap,
+                                    Math.min(faceBitmap.getWidth(), 200), // 최대 너비 200px로 제한
+                                    Math.min(faceBitmap.getHeight(), 200), // 최대 높이 200px로 제한
+                                    true
+                            );
+
+                            // JPEG으로 압축 및 Base64 인코딩
+                            ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
+                            resizedBitmap.compress(Bitmap.CompressFormat.JPEG, 80, byteArrayOutputStream);
+
+                            // 리사이즈된 비트맵 메모리 해제
+                            if (resizedBitmap != faceBitmap) {
+                                resizedBitmap.recycle();
+                            }
+
+                            byte[] byteArray = byteArrayOutputStream.toByteArray();
+                            String base64FaceImage = Base64.encodeToString(byteArray, Base64.DEFAULT);
+
+                            // JSON에 사람 ID와 얼굴 이미지 추가
+                            facesObject.put(Integer.toString(personId), base64FaceImage);
+
+                            Log.d("face", "ID " + personId + "의 얼굴 이미지 인코딩 완료 (크기: " + byteArray.length + " 바이트)");
+                        } catch (Exception e) {
+                            Log.e("face", "ID " + personId + "의 얼굴 이미지 인코딩 중 오류: " + e.getMessage());
+                        } finally {
+                            // 사용 완료된 비트맵 메모리 해제
+                            faceBitmap.recycle();
+                        }
+                    }
+                }
             }
-            */
+
+            // 얼굴 정보가 있으면 이벤트 데이터에 추가
+            if (facesObject.length() > 0) {
+                eventData.put("faces", facesObject);
+            }
+
             // 이벤트 데이터 전송
+
+//            {
+//                "type": "personAppearance",
+//                    "timestamp": 1712755632145,
+//                    "personIds": [3, 5, 8],
+//                "faces": {
+//                "3": "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAA...(생략된 Base64 인코딩 문자열)...",
+//                        "5": "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAA...(생략된 Base64 인코딩 문자열)...",
+//                        "8": "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAA...(생략된 Base64 인코딩 문자열)..."
+//            }
+//            }
+
+
             mSocket.emit("message", eventData.toString());
             Log.d("socket", "사람 등장 이벤트 전송: " + eventData.toString());
 
@@ -775,7 +852,9 @@ private void setupSocket() {
 
                 // 새 사람 등장 이벤트 발생
                 if (!newPersons.isEmpty()) {
-                    sendPersonAppearanceEvent(newPersons);
+                    //등장했을 때가 중요
+                    Map<Integer,Bitmap> faceInfo= captureAndSendNewFaces(workingCopy, trackedObjects, newPersons);
+                    sendPersonAppearanceEvent(newPersons,faceInfo);
                     Log.d("person", "새로 등장한 사람들: " + newPersons);
                 }
 
@@ -849,6 +928,108 @@ private void setupSocket() {
             isProcessingFrame = false;
         }
     }
+
+    private Map<Integer, Bitmap> captureAndSendNewFaces(Bitmap originalFrame, List<SimpleTracker.TrackedObject> trackedObjects, Set<Integer> newPersonIds) {
+        Map<Integer, Bitmap> faceInfo = new HashMap<>();
+
+        // 얼굴 탐지 수행
+        List<FaceDetector.Face> faces = faceDetector.detectFaces(originalFrame);
+        Log.d("face", "얼굴 감지 결과: " + faces.size() + "개 발견");
+
+        if (faces.isEmpty()) {
+            Log.d("face", "프레임에서 얼굴을 찾을 수 없습니다.");
+            return faceInfo; // 빈 맵 반환 (null이 아님)
+        }
+
+        // 각 새 사람 ID에 대해 처리
+        for (Integer personId : newPersonIds) {
+            // 해당 ID를 가진 사람 객체 찾기
+            SimpleTracker.TrackedObject personObject = null;
+            for (SimpleTracker.TrackedObject obj : trackedObjects) {
+                if (obj.getId() == personId && "person".equals(obj.getLabel())) {
+                    personObject = obj;
+                    break;
+                }
+            }
+
+            if (personObject == null) {
+                Log.d("face", "ID " + personId + "의 사람 객체를 찾을 수 없습니다.");
+                continue;
+            }
+
+            // 사람 객체의 중심점 계산 (얼굴 쪽으로)
+            float personCenterX = (personObject.getLeft() + personObject.getRight()) / 2;
+            float personHeadY = personObject.getTop() + (personObject.getBottom() - personObject.getTop()) * 0.2f; // 상단 20% 지점
+
+            // 가장 가까운 얼굴 찾기
+            FaceDetector.Face bestMatchFace = null;
+            float minDistance = Float.MAX_VALUE;
+
+            for (FaceDetector.Face face : faces) {
+                float faceX = (face.getLeft() + face.getRight()) / 2;
+                float faceY = (face.getTop() + face.getBottom()) / 2;
+
+                // 거리 계산 (Y축에 가중치 부여)
+                float distX = Math.abs(faceX - personCenterX);
+                float distY = Math.abs(faceY - personHeadY) * 2; // Y축 거리에 가중치
+                float distance = (float) Math.sqrt(distX * distX + distY * distY);
+
+                // 거리가 이전 최소값보다 작으면 업데이트
+                if (distance < minDistance) {
+                    minDistance = distance;
+                    bestMatchFace = face;
+                }
+            }
+
+            // 얼굴-사람 매칭이 적절한지 확인 (거리가 너무 멀면 매칭 안함)
+            float maxMatchDistance = Math.min(originalFrame.getWidth(), originalFrame.getHeight()) * 0.3f; // 이미지 크기의 30%
+
+            if (bestMatchFace != null && minDistance < maxMatchDistance) {
+                Log.d("face", "사람 ID " + personId + "와 매칭된 얼굴 발견 (거리: " + minDistance + ")");
+
+                // 얼굴 영역 자르기
+                Bitmap faceCrop = cropFace(originalFrame, bestMatchFace);
+                if (faceCrop != null) {
+                    // HashMap에 사람 ID와 얼굴 이미지 저장
+                    faceInfo.put(personId, faceCrop);
+                    // 주의: 여기서는 recycle()을 호출하지 않음 (서버 전송에 사용하기 위해)
+                    Log.d("face", "사람 ID " + personId + "의 얼굴 이미지 저장 (크기: " + faceCrop.getWidth() + "x" + faceCrop.getHeight() + ")");
+                }
+            } else {
+                Log.d("face", "사람 ID " + personId + "와 매칭되는 얼굴이 없거나 너무 멀리 있습니다.");
+            }
+        }
+
+        return faceInfo;
+    }
+    // 얼굴 영역 크롭 메서드
+    private Bitmap cropFace(Bitmap originalBitmap, FaceDetector.Face face) {
+        // 얼굴 영역에 약간의 여백 추가
+        int padding = (int)(Math.min(face.getRight() - face.getLeft(), face.getBottom() - face.getTop()) * 0.1f);
+
+        // 크롭 영역 계산
+        int left = Math.max(0, (int)face.getLeft() - padding);
+        int top = Math.max(0, (int)face.getTop() - padding);
+        int width = Math.min(originalBitmap.getWidth() - left, (int)(face.getRight() - face.getLeft() + 2 * padding));
+        int height = Math.min(originalBitmap.getHeight() - top, (int)(face.getBottom() - face.getTop() + 2 * padding));
+
+        // 영역이 유효한지 확인
+        if (width <= 0 || height <= 0) {
+            Log.e("face", "유효하지 않은 얼굴 크롭 영역: left=" + left + ", top=" + top +
+                    ", width=" + width + ", height=" + height);
+            return null;
+        }
+
+        // 얼굴 영역 크롭
+        try {
+            return Bitmap.createBitmap(originalBitmap, left, top, width, height);
+        } catch (Exception e) {
+            Log.e("face", "얼굴 영역 크롭 중 오류: " + e.getMessage());
+            return null;
+        }
+    }
+
+
 
 
     private Bitmap drawDetectionsDirectly(Bitmap bitmap, List<SimpleTracker.TrackedObject> trackedObjects) {
