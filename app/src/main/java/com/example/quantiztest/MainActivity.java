@@ -42,9 +42,11 @@ import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
 import org.json.JSONArray;
+import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.io.ByteArrayOutputStream;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -92,7 +94,7 @@ public class MainActivity extends AppCompatActivity implements TextureView.Surfa
     private YoloImageProcessor imageProcessor;
 
     // UI 요소들
-      // 이미지 선택 버튼
+    // 이미지 선택 버튼
     private Button btnStartCamera;    // 카메라 시작 버튼
 
     //TextureView는 실시간 화면이 나오도록하는것!!
@@ -130,6 +132,12 @@ public class MainActivity extends AppCompatActivity implements TextureView.Surfa
 
     // 1. 클래스 변수 추가
     private FaceDetector faceDetector;
+
+
+    // 사람 ID별 연속 탐지 횟수를 저장할 맵
+    private Map<Integer, Integer> personAppearanceCount = new HashMap<>();
+    // 연속 탐지 필요 횟수 상수
+    private static final int APPEARANCE_THRESHOLD = 10;
 
     /**
      * 액티비티가 생성될 때 호출되는 메서드
@@ -274,53 +282,75 @@ public class MainActivity extends AppCompatActivity implements TextureView.Surfa
         });
     }
 
-//웹소켓
-private void setupSocket() {
-    try {
-        mSocket = IO.socket(connectUrl);  // Socket.IO 서버 URL
-    } catch (Exception e) {
-        e.printStackTrace();
+    //웹소켓
+    private void setupSocket() {
+        try {
+            mSocket = IO.socket(connectUrl);  // Socket.IO 서버 URL
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        mSocket.connect();  // 연결 시작
+        Log.d("socket", "웹소켓 연결시도");
+        // 연결 성공 시
+        mSocket.on(Socket.EVENT_CONNECT, args -> {
+            Log.d("socket", "웹소켓 연결 성공");
+            try {
+                JSONObject connectMsg = new JSONObject();
+                connectMsg.put("type", "connect");
+                connectMsg.put("message", "Android app connected");
+                mSocket.emit("message", connectMsg.toString());  // 서버로 메시지 전송
+                //event =message이거이므로 서버에있는 @socketio.on('message')이거랑 매칭이 된다.
+                Log.d("socket", "연결 메시지 전송 완료");
+            } catch (Exception e) {
+                Log.e("socket", "연결 메시지 전송 실패: " + e.getMessage());
+            }
+        });
+
+        // 연결 종료 시
+        mSocket.on(Socket.EVENT_DISCONNECT, args -> Log.d("socket", "웹소켓 연결 종료"));
+
+        // 메시지 수신
+        mSocket.on("response", args -> {
+            Log.d("socket", "서버로부터 메시지 수신: " + args[0].toString());
+        });
+
+
+        // 가장 가까운 사람 찾기 요청 처리
+        mSocket.on("find_nearest_person", args -> {
+            try {
+                JSONObject data = new JSONObject(args[0].toString());
+                String kioskId = data.getString("kioskId");
+                Log.d("socket", "키오스크 " + kioskId + "에서 가장 가까운 사람 찾기 요청 수신");
+
+                // 현재 프레임에서 키오스크에 가장 가까운 사람 찾기 요청
+                findNearestPersonToKiosk();
+            } catch (Exception e) {
+                Log.e("socket", "가장 가까운 사람 찾기 요청 처리 오류: " + e.getMessage());
+            }
+        });
+
+        //personFaceFind 배열로 받은 얼굴찾아주기
+        mSocket.on("requestPersonFaceFind", args -> {
+            try {
+                JSONObject data = new JSONObject(args[0].toString());
+                JSONArray personIdsArray = data.getJSONArray("personIds"); // 문자열이 아닌 JSONArray로 받아야
+
+
+                // 이제 JSONArray를 List<Integer>로 변환 [4,5] 얼굴 찾아주세요~
+                List<Integer> personIdsList = new ArrayList<>();
+                for (int i = 0; i < personIdsArray.length(); i++) {
+                    personIdsList.add(personIdsArray.getInt(i));
+                }
+
+                captureAndSendNewFaces(personIdsList);
+
+
+            } catch (Exception e) {
+                Log.e("socket", "가장 가까운 사람 찾기 요청 처리 오류: " + e.getMessage());
+            }
+        });
+
     }
-    mSocket.connect();  // 연결 시작
-    Log.d("socket", "웹소켓 연결시도");
-    // 연결 성공 시
-    mSocket.on(Socket.EVENT_CONNECT, args -> {
-        Log.d("socket", "웹소켓 연결 성공");
-        try {
-            JSONObject connectMsg = new JSONObject();
-            connectMsg.put("type", "connect");
-            connectMsg.put("message", "Android app connected");
-            mSocket.emit("message", connectMsg.toString());  // 서버로 메시지 전송
-            //event =message이거이므로 서버에있는 @socketio.on('message')이거랑 매칭이 된다.
-            Log.d("socket", "연결 메시지 전송 완료");
-        } catch (Exception e) {
-            Log.e("socket", "연결 메시지 전송 실패: " + e.getMessage());
-        }
-    });
-
-    // 연결 종료 시
-    mSocket.on(Socket.EVENT_DISCONNECT, args -> Log.d("socket", "웹소켓 연결 종료"));
-
-    // 메시지 수신
-    mSocket.on("response", args -> {
-        Log.d("socket", "서버로부터 메시지 수신: " + args[0].toString());
-    });
-
-
-    // 가장 가까운 사람 찾기 요청 처리
-    mSocket.on("find_nearest_person", args -> {
-        try {
-            JSONObject data = new JSONObject(args[0].toString());
-            String kioskId = data.getString("kioskId");
-            Log.d("socket", "키오스크 " + kioskId + "에서 가장 가까운 사람 찾기 요청 수신");
-
-            // 현재 프레임에서 키오스크에 가장 가까운 사람 찾기 요청
-            findNearestPersonToKiosk();
-        } catch (Exception e) {
-            Log.e("socket", "가장 가까운 사람 찾기 요청 처리 오류: " + e.getMessage());
-        }
-    });
-}
 
     /**
      * 필요한 권한을 확인하고 없으면 요청하는 메서드
@@ -379,28 +409,7 @@ private void setupSocket() {
     private void sendImageViaWebSocket(Bitmap bitmap) {
         new Thread(() -> {
             try {
-                Log.d("socket", "이미지 인코딩 시작 - 크기: " + bitmap.getWidth() + "x" + bitmap.getHeight());
-                long startTime = System.currentTimeMillis();
-
-                // 이미지 크기 감소 (성능 향상을 위해)
-                Bitmap resizedBitmap = Bitmap.createScaledBitmap(bitmap,
-                        bitmap.getWidth() / 2,
-                        bitmap.getHeight() / 2, true);
-
-                // JPEG으로 압축 및 Base64 인코딩
-                ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
-                resizedBitmap.compress(Bitmap.CompressFormat.JPEG, 70, byteArrayOutputStream);
-                long compressTime = System.currentTimeMillis();
-                Log.d("socket", "이미지 압축 완료 - 소요시간: " + (compressTime - startTime) + "ms");
-
-                resizedBitmap.recycle(); // 리사이즈된 비트맵 메모리 해제
-
-                byte[] byteArray = byteArrayOutputStream.toByteArray();
-                String base64Image = Base64.encodeToString(byteArray, Base64.DEFAULT);
-                long encodeTime = System.currentTimeMillis();
-                Log.d("socket", "이미지 인코딩 완료 - 크기: " + byteArray.length + "바이트, 소요시간: " +
-                        (encodeTime - compressTime) + "ms");
-
+                String base64Image=tobase64(bitmap);
                 // 이미지 데이터 JSON 구성
                 JSONObject imageData = new JSONObject();
                 imageData.put("type", "image");
@@ -420,14 +429,37 @@ private void setupSocket() {
     //2)person이벤트전송 : (사람이 탐지될 때, 사람의 id를 전송하기)
     // 새로 등장한 사람 이벤트 전송
 
+    private String tobase64(Bitmap bitmap){
+        // 이미지 크기 감소 (성능 향상을 위해)
+        Bitmap resizedBitmap = Bitmap.createScaledBitmap(bitmap,
+                bitmap.getWidth() / 2,
+                bitmap.getHeight() / 2, true);
+
+        // JPEG으로 압축 및 Base64 인코딩
+        ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
+        resizedBitmap.compress(Bitmap.CompressFormat.JPEG, 70, byteArrayOutputStream);
+        long compressTime = System.currentTimeMillis();
+        resizedBitmap.recycle(); // 리사이즈된 비트맵 메모리 해제
+
+        byte[] byteArray = byteArrayOutputStream.toByteArray();
+        String base64Image = Base64.encodeToString(byteArray, Base64.DEFAULT);
+        long encodeTime = System.currentTimeMillis();
+        Log.d("socket", "이미지 인코딩 완료 - 크기: " + byteArray.length + "바이트, 소요시간: " +
+                (encodeTime - compressTime) + "ms");
+
+        return base64Image;
+    }
+
+
+
     // 사람 등장 이벤트와 얼굴 이미지 전송 메서드 (수정됨)
-    private void sendPersonAppearanceEvent(Set<Integer> newPersonIds, Map<Integer, Bitmap> faceInfo) {
+    private void sendPersonAppearanceEvent(Set<Integer> newPersonIds,Bitmap appearBitmap) {
         try {
             // 이벤트 데이터 JSON 구성
             JSONObject eventData = new JSONObject();
             eventData.put("type", "personAppearance");
             eventData.put("timestamp", System.currentTimeMillis());
-
+            eventData.put("thumbnail", tobase64(appearBitmap));
             // 사람 ID 배열 생성
             JSONArray personsArray = new JSONArray();
             for (Integer id : newPersonIds) {
@@ -435,65 +467,13 @@ private void setupSocket() {
             }
             eventData.put("personIds", personsArray);
 
-            // 얼굴 이미지 정보 추가
-            JSONObject facesObject = new JSONObject();
-
-            // 각 사람 ID에 대해 얼굴 이미지 처리
-            for (Integer personId : newPersonIds) {
-                // 해당 ID의 얼굴 이미지가 있는 경우에만 처리
-                if (faceInfo.containsKey(personId)) {
-                    Bitmap faceBitmap = faceInfo.get(personId);
-                    if (faceBitmap != null) {
-                        try {
-                            // 이미지 크기 축소 (성능 향상)
-                            Bitmap resizedBitmap = Bitmap.createScaledBitmap(
-                                    faceBitmap,
-                                    Math.min(faceBitmap.getWidth(), 200), // 최대 너비 200px로 제한
-                                    Math.min(faceBitmap.getHeight(), 200), // 최대 높이 200px로 제한
-                                    true
-                            );
-
-                            // JPEG으로 압축 및 Base64 인코딩
-                            ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
-                            resizedBitmap.compress(Bitmap.CompressFormat.JPEG, 80, byteArrayOutputStream);
-
-                            // 리사이즈된 비트맵 메모리 해제
-                            if (resizedBitmap != faceBitmap) {
-                                resizedBitmap.recycle();
-                            }
-
-                            byte[] byteArray = byteArrayOutputStream.toByteArray();
-                            String base64FaceImage = Base64.encodeToString(byteArray, Base64.DEFAULT);
-
-                            // JSON에 사람 ID와 얼굴 이미지 추가
-                            facesObject.put(Integer.toString(personId), base64FaceImage);
-
-                            Log.d("face", "ID " + personId + "의 얼굴 이미지 인코딩 완료 (크기: " + byteArray.length + " 바이트)");
-                        } catch (Exception e) {
-                            Log.e("face", "ID " + personId + "의 얼굴 이미지 인코딩 중 오류: " + e.getMessage());
-                        } finally {
-                            // 사용 완료된 비트맵 메모리 해제
-                            faceBitmap.recycle();
-                        }
-                    }
-                }
-            }
-
-            // 얼굴 정보가 있으면 이벤트 데이터에 추가
-            if (facesObject.length() > 0) {
-                eventData.put("faces", facesObject);
-            }
-
             // 이벤트 데이터 전송
 
 //            {
 //                "type": "personAppearance",
 //                    "timestamp": 1712755632145,
 //                    "personIds": [3, 5, 8],
-//                "faces": {
-//                "3": "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAA...(생략된 Base64 인코딩 문자열)...",
-//                        "5": "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAA...(생략된 Base64 인코딩 문자열)...",
-//                        "8": "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAA...(생략된 Base64 인코딩 문자열)..."
+//                     "thumbnail" : 비트 string
 //            }
 //            }
 
@@ -813,7 +793,6 @@ private void setupSocket() {
         }
     }
 
-    // 프레임 처리 및 오버레이 업데이트하는 새로운 메서드
     private void processFrameForOverlay(Bitmap bitmap) {
         if (imageProcessor != null) {
             new Thread(() -> {
@@ -833,32 +812,55 @@ private void setupSocket() {
                         currentPersonIds.add(obj.getId());
                     }
                 }
+
                 // 로깅
                 Log.d("person", "현재 프레임 사람들: " + currentPersonIds);
                 Log.d("person", "기존 관리 중인 사람들: " + personIdCountMap.keySet());
+                Log.d("person", "등장 카운트 중인 사람들: " + personAppearanceCount.keySet());
 
-                // 1. 현재 프레임에 있는 사람 처리
-                Set<Integer> newPersons = new HashSet<>();
+                // 각 ID별 연속 탐지 횟수 업데이트
+                Set<Integer> confirmedNewPersons = new HashSet<>();
+
+                // 현재 프레임에 있는 ID들의 카운트 증가
                 for (Integer id : currentPersonIds) {
+                    // 이미 등록된 사람은 처리하지 않음
                     if (personIdCountMap.containsKey(id)) {
                         // 기존에 있던 사람은 카운트 초기화
                         personIdCountMap.put(id, 0);
                     } else {
-                        // 새로 등장한 사람
-                        newPersons.add(id);
-                        personIdCountMap.put(id, 0);
+                        // 새로운 사람 - 연속 탐지 횟수 증가
+                        int appearCount = personAppearanceCount.getOrDefault(id, 0) + 1;
+                        personAppearanceCount.put(id, appearCount);
+
+                        // 연속 탐지 임계값 도달 시 확정
+                        if (appearCount >= APPEARANCE_THRESHOLD) {
+                            confirmedNewPersons.add(id);
+                            // 확정된 사람은 관리 맵에 추가
+                            personIdCountMap.put(id, 0);
+                            // 연속 탐지 맵에서는 제거
+                            personAppearanceCount.remove(id);
+                        }
                     }
                 }
 
-                // 새 사람 등장 이벤트 발생
-                if (!newPersons.isEmpty()) {
-                    //등장했을 때가 중요
-                    Map<Integer,Bitmap> faceInfo= captureAndSendNewFaces(workingCopy, trackedObjects, newPersons);
-                    sendPersonAppearanceEvent(newPersons,faceInfo);
-                    Log.d("person", "새로 등장한 사람들: " + newPersons);
+                // 이전 프레임에서 탐지되었으나 현재 프레임에 없는 ID의 연속 탐지 카운트 리셋
+                Iterator<Map.Entry<Integer, Integer>> appearanceIterator = personAppearanceCount.entrySet().iterator();
+                while (appearanceIterator.hasNext()) {
+                    Map.Entry<Integer, Integer> entry = appearanceIterator.next();
+                    if (!currentPersonIds.contains(entry.getKey())) {
+                        // 연속성이 끊겼으므로 제거
+                        appearanceIterator.remove();
+                        Log.d("person", "ID " + entry.getKey() + " 연속 탐지 끊어짐, 카운트 리셋");
+                    }
                 }
 
-                // 2. 현재 프레임에 없는 사람 처리 (카운트 증가)
+                // 새 사람 등장 이벤트 발생 (수정된 코드)
+                if (!confirmedNewPersons.isEmpty()) {
+                    sendPersonAppearanceEvent(confirmedNewPersons, resultBitmap);
+                    Log.d("person", "새로 등장한 사람들(3프레임 연속 감지): " + confirmedNewPersons);
+                }
+
+                // 현재 프레임에 없는 사람 처리 (카운트 증가)
                 Set<Integer> missingPersons = new HashSet<>(personIdCountMap.keySet());
                 missingPersons.removeAll(currentPersonIds);
 
@@ -867,10 +869,10 @@ private void setupSocket() {
                     int count = personIdCountMap.get(id);
                     count++;
                     personIdCountMap.put(id, count);
-                    Log.d("person", "사람 ID " + id + " 카운트 증가: " + count);
+                    Log.d("person", "사람 ID " + id + " 사라짐 카운트 증가: " + count);
                 }
 
-                // 3. 임계값 초과한 사람 확인 (실제로 사라진 사람)
+                // 임계값 초과한 사람 확인 (실제로 사라진 사람)
                 Set<Integer> actuallyDisappeared = new HashSet<>();
                 for (Map.Entry<Integer, Integer> entry : personIdCountMap.entrySet()) {
                     if (entry.getValue() >= DISAPPEARANCE_THRESHOLD) {
@@ -928,90 +930,153 @@ private void setupSocket() {
             isProcessingFrame = false;
         }
     }
+    private void captureAndSendNewFaces(List<Integer> newPersonIds) {
+        new Thread(() -> {
+            try {
+                Log.i("capture","캡처요청"+newPersonIds);
+                // 최신 프레임을 기다림
+                Thread.sleep(100);
+                runOnUiThread(() -> {
+                    Map<Integer, String> faceInfo = new HashMap<>();
+                    Bitmap currentBitmap = textureView.getBitmap();
 
-    private Map<Integer, Bitmap> captureAndSendNewFaces(Bitmap originalFrame, List<SimpleTracker.TrackedObject> trackedObjects, Set<Integer> newPersonIds) {
-        Map<Integer, Bitmap> faceInfo = new HashMap<>();
+                    // 객체 탐지 및 얼굴 감지 수행
+                    List<FaceDetector.Face> faces = faceDetector.detectFaces(currentBitmap);
+                    final List<YoloImageProcessor.Detection> detections = imageProcessor.processImage(currentBitmap);
+                    final List<SimpleTracker.TrackedObject> trackedObjects = tracker.update(detections);
 
-        // 얼굴 탐지 수행
-        List<FaceDetector.Face> faces = faceDetector.detectFaces(originalFrame);
-        Log.d("face", "얼굴 감지 결과: " + faces.size() + "개 발견");
+                    if (faces.isEmpty()) {
+                        Log.d("face", "프레임에서 얼굴을 찾을 수 없습니다.");
+                        // 얼굴이 없더라도 null 값으로 응답 전송
+                        sendEmptyFaceInfo(newPersonIds);
+                        return;
+                    }
 
-        if (faces.isEmpty()) {
-            Log.d("face", "프레임에서 얼굴을 찾을 수 없습니다.");
-            return faceInfo; // 빈 맵 반환 (null이 아님)
+                    // 각 새 사람 ID에 대해 처리
+                    for (Integer personId : newPersonIds) {
+                        // 해당 ID를 가진 사람 객체 찾기
+                        SimpleTracker.TrackedObject personObject = null;
+                        for (SimpleTracker.TrackedObject obj : trackedObjects) {
+                            if (obj.getId() == personId && "person".equals(obj.getLabel())) {
+                                personObject = obj;
+                                break;
+                            }
+                        }
+
+                        if (personObject == null) {
+                            // 사람 객체를 찾지 못했을 때 null 값 저장
+                            faceInfo.put(personId, null);
+                            Log.d("face", "사람 ID " + personId + "에 해당하는 객체를 찾을 수 없습니다.");
+                            continue;
+                        }
+
+                        // 사람 객체의 중심점 계산 (얼굴 쪽으로)
+                        float personCenterX = (personObject.getLeft() + personObject.getRight()) / 2;
+                        float personHeadY = personObject.getTop() + (personObject.getBottom() - personObject.getTop()) * 0.2f; // 상단 20% 지점
+
+                        // 가장 가까운 얼굴 찾기
+                        FaceDetector.Face bestMatchFace = null;
+                        float minDistance = Float.MAX_VALUE;
+
+                        for (FaceDetector.Face face : faces) {
+                            float faceX = (face.getLeft() + face.getRight()) / 2;
+                            float faceY = (face.getTop() + face.getBottom()) / 2;
+
+                            // 거리 계산
+                            float distX = Math.abs(faceX - personCenterX);
+                            float distY = Math.abs(faceY - personHeadY) * 2; // Y축 거리에 가중치
+                            float distance = (float) Math.sqrt(distX * distX + distY * distY);
+
+                            // 거리가 이전 최소값보다 작으면 업데이트
+                            if (distance < minDistance) {
+                                minDistance = distance;
+                                bestMatchFace = face;
+                            }
+                        }
+
+                        // 얼굴-사람 매칭이 적절한지 확인
+                        float maxMatchDistance = Math.min(currentBitmap.getWidth(), currentBitmap.getHeight()) * 0.3f;
+
+                        if (bestMatchFace != null && minDistance < maxMatchDistance) {
+                            Log.d("face", "사람 ID " + personId + "와 매칭된 얼굴 발견 (거리: " + minDistance + ")");
+
+                            // 얼굴 영역 자르기
+                            Bitmap faceCrop = cropFace(currentBitmap, bestMatchFace);
+                            if (faceCrop != null) {
+                                String encodedFace = tobase64(faceCrop);
+                                faceInfo.put(personId, encodedFace);
+                                Log.d("face", "사람 ID " + personId + "의 얼굴 이미지 저장 완료");
+                                faceCrop.recycle(); // 메모리 누수 방지
+                            } else {
+                                faceInfo.put(personId, null);
+                                Log.d("face", "사람 ID " + personId + "의 얼굴 이미지 크롭 실패");
+                            }
+                        } else {
+                            faceInfo.put(personId, null);
+                            Log.d("face", "사람 ID " + personId + "와 매칭되는 얼굴이 없거나 너무 멀리 있습니다.");
+                        }
+                    }
+
+                    // Map을 JSONObject로 변환
+                    JSONObject facesData = new JSONObject();
+
+                    // JSONObject에 faceInfo Map 데이터 추가 (수정된 부분)
+                    for (Map.Entry<Integer, String> entry : faceInfo.entrySet()) {
+                        try {
+                            facesData.put(String.valueOf(entry.getKey()), entry.getValue());
+
+                            // 최종 전송할 데이터 포맷 구성
+                            JSONObject dataToSend = new JSONObject();
+                            dataToSend.put("faces", facesData);
+
+
+                            // 서버로 전송
+                            mSocket.emit("findPersonFace", dataToSend);
+                            Log.d("socket", "얼굴 데이터 전송 완료");
+
+                        } catch (JSONException e) {
+                            throw new RuntimeException(e);
+                        }
+                    }
+
+
+
+                });
+
+            } catch (Exception e) {
+                Log.e("face", "얼굴 데이터 처리 오류: " + e.getMessage());
+                e.printStackTrace();
+            }
+        }).start();
+    }
+
+    // 얼굴을 찾지 못했을 때 null 값으로 응답 전송
+    private void sendEmptyFaceInfo(List<Integer> personIds) {
+        try {
+            JSONObject facesData = new JSONObject();
+
+            // 모든 사람 ID에 대해 null 값 설정
+            for (Integer personId : personIds) {
+                facesData.put(String.valueOf(personId), JSONObject.NULL);
+            }
+
+            JSONObject dataToSend = new JSONObject();
+            dataToSend.put("faces", facesData);
+
+            mSocket.emit("findPersonFace", dataToSend);
+            Log.d("socket", "얼굴 없음 데이터 전송 완료");
+        } catch (Exception e) {
+            Log.e("face", "얼굴 없음 데이터 전송 오류: " + e.getMessage());
         }
-
-        // 각 새 사람 ID에 대해 처리
-        for (Integer personId : newPersonIds) {
-            // 해당 ID를 가진 사람 객체 찾기
-            SimpleTracker.TrackedObject personObject = null;
-            for (SimpleTracker.TrackedObject obj : trackedObjects) {
-                if (obj.getId() == personId && "person".equals(obj.getLabel())) {
-                    personObject = obj;
-                    break;
-                }
-            }
-
-            if (personObject == null) {
-                Log.d("face", "ID " + personId + "의 사람 객체를 찾을 수 없습니다.");
-                continue;
-            }
-
-            // 사람 객체의 중심점 계산 (얼굴 쪽으로)
-            float personCenterX = (personObject.getLeft() + personObject.getRight()) / 2;
-            float personHeadY = personObject.getTop() + (personObject.getBottom() - personObject.getTop()) * 0.2f; // 상단 20% 지점
-
-            // 가장 가까운 얼굴 찾기
-            FaceDetector.Face bestMatchFace = null;
-            float minDistance = Float.MAX_VALUE;
-
-            for (FaceDetector.Face face : faces) {
-                float faceX = (face.getLeft() + face.getRight()) / 2;
-                float faceY = (face.getTop() + face.getBottom()) / 2;
-
-                // 거리 계산 (Y축에 가중치 부여)
-                float distX = Math.abs(faceX - personCenterX);
-                float distY = Math.abs(faceY - personHeadY) * 2; // Y축 거리에 가중치
-                float distance = (float) Math.sqrt(distX * distX + distY * distY);
-
-                // 거리가 이전 최소값보다 작으면 업데이트
-                if (distance < minDistance) {
-                    minDistance = distance;
-                    bestMatchFace = face;
-                }
-            }
-
-            // 얼굴-사람 매칭이 적절한지 확인 (거리가 너무 멀면 매칭 안함)
-            float maxMatchDistance = Math.min(originalFrame.getWidth(), originalFrame.getHeight()) * 0.3f; // 이미지 크기의 30%
-
-            if (bestMatchFace != null && minDistance < maxMatchDistance) {
-                Log.d("face", "사람 ID " + personId + "와 매칭된 얼굴 발견 (거리: " + minDistance + ")");
-
-                // 얼굴 영역 자르기
-                Bitmap faceCrop = cropFace(originalFrame, bestMatchFace);
-                if (faceCrop != null) {
-                    // HashMap에 사람 ID와 얼굴 이미지 저장
-                    faceInfo.put(personId, faceCrop);
-                    // 주의: 여기서는 recycle()을 호출하지 않음 (서버 전송에 사용하기 위해)
-                    Log.d("face", "사람 ID " + personId + "의 얼굴 이미지 저장 (크기: " + faceCrop.getWidth() + "x" + faceCrop.getHeight() + ")");
-                }
-            } else {
-                Log.d("face", "사람 ID " + personId + "와 매칭되는 얼굴이 없거나 너무 멀리 있습니다.");
-            }
-        }
-
-        return faceInfo;
     }
     // 얼굴 영역 크롭 메서드
     private Bitmap cropFace(Bitmap originalBitmap, FaceDetector.Face face) {
-        // 얼굴 영역에 약간의 여백 추가
-        int padding = (int)(Math.min(face.getRight() - face.getLeft(), face.getBottom() - face.getTop()) * 0.1f);
 
         // 크롭 영역 계산
-        int left = Math.max(0, (int)face.getLeft() - padding);
-        int top = Math.max(0, (int)face.getTop() - padding);
-        int width = Math.min(originalBitmap.getWidth() - left, (int)(face.getRight() - face.getLeft() + 2 * padding));
-        int height = Math.min(originalBitmap.getHeight() - top, (int)(face.getBottom() - face.getTop() + 2 * padding));
+        int left = Math.max(0, (int)face.getLeft());
+        int top = Math.max(0, (int)face.getTop());
+        int width = Math.min(originalBitmap.getWidth() - left, (int)(face.getRight() - face.getLeft() ));
+        int height = Math.min(originalBitmap.getHeight() - top, (int)(face.getBottom() - face.getTop() ));
 
         // 영역이 유효한지 확인
         if (width <= 0 || height <= 0) {
@@ -1330,17 +1395,17 @@ private void setupSocket() {
                                     personDistance);
 
 
-                        try {
-                            JSONObject actionEventData = new JSONObject();
-                            actionEventData.put("type", "action");
-                            actionEventData.put("personId", personId);
-                            actionEventData.put("object", obj.getLabel());
-                            actionEventData.put("act", wasAbove == false && isAbove == true ? 0 : 1);
-                            // 0 이면 -> 내려놓기 1이면 -> 집기*****
-                            mSocket.emit("message", actionEventData.toString());
-                        }catch (Exception e){
+                            try {
+                                JSONObject actionEventData = new JSONObject();
+                                actionEventData.put("type", "action");
+                                actionEventData.put("personId", personId);
+                                actionEventData.put("object", obj.getLabel());
+                                actionEventData.put("act", wasAbove == false && isAbove == true ? 0 : 1);
+                                // 0 이면 -> 내려놓기 1이면 -> 집기*****
+                                mSocket.emit("message", actionEventData.toString());
+                            }catch (Exception e){
 
-                        }
+                            }
 
                         }
 
@@ -1511,8 +1576,8 @@ private void setupSocket() {
      * 0: 선 위에 있음
      */
     private boolean signedDistanceFromPointToLine(float pointX, float pointY,
-                                                float lineStartX, float lineStartY,
-                                                float lineEndX, float lineEndY) {
+                                                  float lineStartX, float lineStartY,
+                                                  float lineEndX, float lineEndY) {
         float lineLength = (float) Math.sqrt(
                 Math.pow(lineEndX - lineStartX, 2) + Math.pow(lineEndY - lineStartY, 2)
         );

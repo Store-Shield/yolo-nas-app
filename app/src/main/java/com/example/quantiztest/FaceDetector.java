@@ -120,10 +120,13 @@ public class FaceDetector {
                 for (int x = 0; x < 80; x++) {
                     // 히트맵 원시 값
                       //
-                    int rawValue = outputHeatmap[0][y][x][0] & 0xFF;
-                    float score = (rawValue - 192) * 0.039235096f;
-                    float normalizedScore = (score + 7.530337f) / 10.00052f;
+                    float rawValue = outputHeatmap[0][y][x][0] & 0xFF;
+                    float score = (rawValue - heatmapZeroPoint) * heatmapScale;
 
+                    float minScore = (0 - heatmapZeroPoint) * heatmapScale;
+                    float maxScore = (255 - heatmapZeroPoint) * heatmapScale;
+
+                    float normalizedScore = (score - minScore) / (maxScore - minScore);
 
 //                    float score = (rawValue - heatmapZeroPoint) * heatmapScale;
 
@@ -137,18 +140,23 @@ public class FaceDetector {
                         float offsetH = ((outputBoxes[0][y][x][3] & 0xFF) - boxZeroPoint) * boxScale;
 
                         // 중심점 계산 (그리드 위치 + 오프셋)
-                        float centerX = (x + offsetX) / 80.0f;  // 그리드 위치를 0-1 범위로 정규화
-                        float centerY = (y + offsetY) / 60.0f;
+                        float centerX = x/80.f;  // 그리드 위치를 0-1 범위로 정규화
+                        float centerY = y/60.f;
 
                         // 너비와 높이 계산
                         float width = offsetW / 80.0f;  // 너비도 0-1 범위로 정규화
                         float height = offsetH / 60.0f;
 
-                        // 박스 좌표 계산
-                        float left = Math.max(0, centerX - width/2) * bitmap.getWidth();
-                        float top = Math.max(0, centerY - height/2) * bitmap.getHeight();
-                        float right = Math.min(1, centerX + width/2) * bitmap.getWidth();
-                        float bottom = Math.min(1, centerY + height/2) * bitmap.getHeight();
+
+                        // 너비와 높이 계산
+                        float realwidth = width*bitmap.getWidth(); // 너비도 0-1 범위로 정규화
+                        float realheight = height * bitmap.getHeight();
+
+
+                        float left = Math.max(0, centerX - width/2) * bitmap.getWidth()    - (realwidth*0.7f);
+                        float top = Math.max(0, centerY - height/2) * bitmap.getHeight() - (realheight*0.7f);
+                        float right = Math.min(1, centerX + width/2) * bitmap.getWidth()+ (realwidth*0.7f);
+                        float bottom = Math.min(1, centerY + height/2) * bitmap.getHeight()+ (realheight*0.7f);
 
                         // 박스가 유효한지 확인
                         if (right > left && bottom > top) {
@@ -163,7 +171,7 @@ public class FaceDetector {
 
 
             // 중복 제거
-            return applyNMS(allFaces, 0.2f);
+            return applyNMS(allFaces, 0.1f);
 
         } catch (Exception e) {
             Log.e(TAG, "모델 실행 중 오류 발생: " + e.getMessage(), e);
