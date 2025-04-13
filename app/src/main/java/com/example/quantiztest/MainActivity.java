@@ -116,7 +116,7 @@ public class MainActivity extends AppCompatActivity implements TextureView.Surfa
     private boolean isProcessingFrame = false;
     private boolean isCameraMode = false;
     //ip변경부분
-    final String connectUrl="https://5047-223-194-135-52.ngrok-free.app";
+    final String connectUrl="https://42d5-59-5-1-72.ngrok-free.app";
     private Socket mSocket;
 
     // 지금까지 본 모든 사람 ID들
@@ -138,6 +138,11 @@ public class MainActivity extends AppCompatActivity implements TextureView.Surfa
     private Map<Integer, Integer> personAppearanceCount = new HashMap<>();
     // 연속 탐지 필요 횟수 상수
     private static final int APPEARANCE_THRESHOLD = 10;
+
+
+
+
+    private final Object imageLock=new Object();
 
     /**
      * 액티비티가 생성될 때 호출되는 메서드
@@ -797,7 +802,11 @@ public class MainActivity extends AppCompatActivity implements TextureView.Surfa
         if (imageProcessor != null) {
             new Thread(() -> {
                 // 객체 탐지 및 추적 수행
-                final List<YoloImageProcessor.Detection> detections = imageProcessor.processImage(bitmap);
+                List<YoloImageProcessor.Detection> detections;
+                synchronized (imageLock){
+                    detections=imageProcessor.processImage(bitmap);
+                }
+
                 final List<SimpleTracker.TrackedObject> trackedObjects = tracker.update(detections);
 
                 Bitmap workingCopy = bitmap.copy(bitmap.getConfig(), true);
@@ -942,7 +951,11 @@ public class MainActivity extends AppCompatActivity implements TextureView.Surfa
 
                     // 객체 탐지 및 얼굴 감지 수행
                     List<FaceDetector.Face> faces = faceDetector.detectFaces(currentBitmap);
-                    final List<YoloImageProcessor.Detection> detections = imageProcessor.processImage(currentBitmap);
+
+                    List<YoloImageProcessor.Detection> detections;
+                    synchronized (imageLock){
+                        detections=imageProcessor.processImage(currentBitmap);
+                    }
                     final List<SimpleTracker.TrackedObject> trackedObjects = tracker.update(detections);
 
                     if (faces.isEmpty()) {
@@ -1055,7 +1068,7 @@ public class MainActivity extends AppCompatActivity implements TextureView.Surfa
         try {
             JSONObject facesData = new JSONObject();
 
-            // 모든 사람 ID에 대해 null 값 설정
+            // 모든 사람 ID에 대해 n6ull 값 설정
             for (Integer personId : personIds) {
                 facesData.put(String.valueOf(personId), JSONObject.NULL);
             }
@@ -1323,7 +1336,7 @@ public class MainActivity extends AppCompatActivity implements TextureView.Surfa
 
         // 각 객체에 대해 가상 선과의 교차 확인
         for (SimpleTracker.TrackedObject obj : trackedObjects) {
-            if (obj.getConfidence() >= 0.7f && "cup".equals(obj.getLabel())) {
+            if (obj.getConfidence() >= 0.7f && ("cup".equals(obj.getLabel())||"laptop".equals(obj.getLabel()) )) {
                 int objectId = obj.getId();
 
                 // 객체의 중심점 계산 캔버스에서의위치인것
@@ -1456,7 +1469,10 @@ public class MainActivity extends AppCompatActivity implements TextureView.Surfa
                         Bitmap bitmap = textureView.getBitmap();
                         if (bitmap != null) {
                             // 현재 추적 중인 객체 가져오기
-                            List<YoloImageProcessor.Detection> detections = imageProcessor.processImage(bitmap);
+                            List<YoloImageProcessor.Detection> detections;
+                            synchronized (imageLock){
+                                detections=imageProcessor.processImage(bitmap);
+                            }
                             List<SimpleTracker.TrackedObject> trackedObjects = tracker.update(detections);
 
                             // 키오스크 영역 중심점 계산
