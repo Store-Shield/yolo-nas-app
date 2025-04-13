@@ -54,6 +54,8 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 
@@ -144,6 +146,12 @@ public class MainActivity extends AppCompatActivity implements TextureView.Surfa
 
     private final Object imageLock=new Object();
 
+
+
+    // MainActivity 클래스의 멤버 변수로 추가
+    private ExecutorService processingThreadPool;
+    private ExecutorService networkThreadPool;
+
     /**
      * 액티비티가 생성될 때 호출되는 메서드
      * UI 초기화, 권한 확인, 모델 로딩 등 초기 설정을 수행합니다.
@@ -153,6 +161,9 @@ public class MainActivity extends AppCompatActivity implements TextureView.Surfa
         super.onCreate((Bundle) savedInstanceState);
         // 레이아웃 설정
         setContentView(R.layout.activity_main);
+
+        processingThreadPool = Executors.newFixedThreadPool(2);
+        networkThreadPool = Executors.newFixedThreadPool(2);
 
         // 이벤트 표시용 TextView 추가
         tvEvent = new TextView(this);
@@ -767,7 +778,7 @@ public class MainActivity extends AppCompatActivity implements TextureView.Surfa
             backgroundHandler.post(new Runnable() {
                 @Override
                 public void run() {
-                    //계속해서 카메라결과를 보낸다.
+                    // 계속해서 카메라결과를 보낸다.
                     if (isCameraMode && !isProcessingFrame) {
                         isProcessingFrame = true;
 
@@ -788,7 +799,7 @@ public class MainActivity extends AppCompatActivity implements TextureView.Surfa
 
                     // 다음 프레임 처리 예약 (더 짧은 간격으로 처리 가능)
                     if (backgroundHandler != null) {
-                        backgroundHandler.postDelayed(this, 50); // 100ms 간격으로 수정
+                        backgroundHandler.postDelayed(this, 16); // 60fps를 위해 16ms로 변경
                     }
                 }
             });
@@ -797,22 +808,26 @@ public class MainActivity extends AppCompatActivity implements TextureView.Surfa
             Log.e(TAG, "카메라 프리뷰 업데이트 중 오류: " + e.getMessage());
         }
     }
-
     private void processFrameForOverlay(Bitmap bitmap) {
         if (imageProcessor != null) {
-            new Thread(() -> {
-                // 객체 탐지 및 추적 수행
-                List<YoloImageProcessor.Detection> detections;
-                synchronized (imageLock){
-                    detections=imageProcessor.processImage(bitmap);
-                }
+            // 비트맵 복사본 생성 (UI 스레드에서 획득한 원본은 빠르게 해제)
+            final Bitmap processingCopy = bitmap.copy(bitmap.getConfig(), true);
 
+            // 이미지 처리 스레드
+            processingThreadPool.execute(() -> {
+                final List<YoloImageProcessor.Detection> detections;
+                synchronized (imageLock) {
+                    detections = imageProcessor.processImage(processingCopy);
+                }
                 final List<SimpleTracker.TrackedObject> trackedObjects = tracker.update(detections);
 
-                Bitmap workingCopy = bitmap.copy(bitmap.getConfig(), true);
-                final Bitmap resultBitmap = drawDetectionsDirectly(workingCopy, trackedObjects);
+                // 결과 이미지 생성 (별도 스레드에서 처리)
+                Bitmap resultBitmap = drawDetectionsDirectly(processingCopy, trackedObjects);
 
-                sendImageViaWebSocket(resultBitmap);
+                // 웹소켓으로 이미지 전송 (별도 스레드에서 실행)
+                networkThreadPool.execute(() -> {
+                    sendImageViaWebSocket(resultBitmap);
+                });
 
                 // 현재 프레임에서 감지된 사람 ID 수집
                 Set<Integer> currentPersonIds = new HashSet<>();
@@ -863,10 +878,13 @@ public class MainActivity extends AppCompatActivity implements TextureView.Surfa
                     }
                 }
 
-                // 새 사람 등장 이벤트 발생 (수정된 코드)
+                // 새 사람 등장 이벤트 발생 (별도 스레드에서 처리)
                 if (!confirmedNewPersons.isEmpty()) {
-                    sendPersonAppearanceEvent(confirmedNewPersons, resultBitmap);
-                    Log.d("person", "새로 등장한 사람들(3프레임 연속 감지): " + confirmedNewPersons);
+                    final Bitmap eventBitmap = resultBitmap.copy(resultBitmap.getConfig(), true);
+                    networkThreadPool.execute(() -> {
+                        sendPersonAppearanceEvent(confirmedNewPersons, eventBitmap);
+                        Log.d("person", "새로 등장한 사람들(3프레임 연속 감지): " + confirmedNewPersons);
+                    });
                 }
 
                 // 현재 프레임에 없는 사람 처리 (카운트 증가)
@@ -889,10 +907,12 @@ public class MainActivity extends AppCompatActivity implements TextureView.Surfa
                     }
                 }
 
-                // 사라짐 이벤트 발생 및 목록에서 제거
+                // 사라짐 이벤트 발생 및 목록에서 제거 (별도 스레드에서 처리)
                 if (!actuallyDisappeared.isEmpty()) {
-                    sendPersonDisappearanceEvent(actuallyDisappeared);
-                    Log.d("person", "실제로 사라진 사람들: " + actuallyDisappeared);
+                    networkThreadPool.execute(() -> {
+                        sendPersonDisappearanceEvent(actuallyDisappeared);
+                        Log.d("person", "실제로 사라진 사람들: " + actuallyDisappeared);
+                    });
 
                     // 사라진 사람은 목록에서 제거
                     for (Integer id : actuallyDisappeared) {
@@ -932,9 +952,9 @@ public class MainActivity extends AppCompatActivity implements TextureView.Surfa
                     imageView.setVisibility(View.GONE);
                 });
 
-                // 처리 후 비트맵 해제
+                // 원본 비트맵 해제
                 bitmap.recycle();
-            }).start();
+            });
         } else {
             isProcessingFrame = false;
         }
@@ -1725,6 +1745,12 @@ public class MainActivity extends AppCompatActivity implements TextureView.Surfa
      */
     @Override
     protected void onDestroy() {
+        if (processingThreadPool != null) {
+            processingThreadPool.shutdown();
+        }
+        if (networkThreadPool != null) {
+            networkThreadPool.shutdown();
+        }
         // TFLite 모델 리소스 해제
         if (tfliteLoader != null) {
             tfliteLoader.close();
