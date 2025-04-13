@@ -164,7 +164,7 @@ public class YoloImageProcessor {
                     int classIndex = (int)(((outputClasses[0][i] & 0xFF) - classZeroPoint) * classScale);
                     if (classIndex >= 0 && classIndex < labels.size()) {
                         String label = labels.get(classIndex);
-                        if(!label.equals("cup") && !label.equals("person")){ //********************여기서 상품등록하기!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+                        if(!label.equals("cup") && !label.equals("person") && !label.equals("laptop") ){ //********************여기서 상품등록하기!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
                             continue;
                         }
 
