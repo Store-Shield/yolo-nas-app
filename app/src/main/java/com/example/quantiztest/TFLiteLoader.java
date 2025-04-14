@@ -39,12 +39,21 @@ public class TFLiteLoader {
 
             // 인터프리터 옵션 설정
             Interpreter.Options options = new Interpreter.Options();
-            // 양자화된 모델을 사용하지만 float 출력을 원할 때 사용
-            options.setUseNNAPI(false); // NNAPI 사용 비활성화 (필요시 true로 변경)
-            options.setAllowFp16PrecisionForFp32(false); // FP16 정밀도 비활성화
 
-            // 이 옵션을 true로 설정하면 양자화된 출력을 자동으로 float로 변환
-            options.setAllowBufferHandleOutput(false);
+            // CPU 스레드 수 최적화
+            int availableProcessors = Runtime.getRuntime().availableProcessors();
+            int optimalThreads = Math.min(4, availableProcessors);
+            options.setNumThreads(optimalThreads);
+            Log.d(TAG, "Using " + optimalThreads + " threads for " + modelName);
+
+            // 성능 옵션
+            options.setAllowFp16PrecisionForFp32(true);
+
+            // CPU 기반 NNAPI 활성화 (API 27+)
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+                options.setUseNNAPI(true);
+                Log.d(TAG, "NNAPI enabled for " + modelName);
+            }
 
             tflite = new Interpreter(tfliteModel, options);
 
@@ -71,8 +80,6 @@ public class TFLiteLoader {
             return false;
         }
     }
-
-
     /**
      * Assets에서 모델 파일을 읽어 MappedByteBuffer로 변환합니다.
      */

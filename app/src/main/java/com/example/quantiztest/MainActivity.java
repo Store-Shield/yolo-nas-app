@@ -59,9 +59,6 @@ import java.util.concurrent.TimeUnit;
 
 import io.socket.client.IO;
 import io.socket.client.Socket;
-// 클래스 상단에 임포트 추가
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 
 
 /**
@@ -119,7 +116,7 @@ public class MainActivity extends AppCompatActivity implements TextureView.Surfa
     private boolean isProcessingFrame = false;
     private boolean isCameraMode = false;
     //ip변경부분
-    final String connectUrl="https://42d5-59-5-1-72.ngrok-free.app";
+    final String connectUrl="https://a9b1-223-194-133-239.ngrok-free.app";
     private Socket mSocket;
 
     // 지금까지 본 모든 사람 ID들
@@ -290,6 +287,14 @@ public class MainActivity extends AppCompatActivity implements TextureView.Surfa
         });
     }
 
+
+
+
+
+
+
+
+
     //웹소켓
     private void setupSocket() {
         try {
@@ -338,6 +343,7 @@ public class MainActivity extends AppCompatActivity implements TextureView.Surfa
         });
 
         //personFaceFind 배열로 받은 얼굴찾아주기
+        // 요청 핸들러 수정
         mSocket.on("requestPersonFaceFind", args -> {
             try {
                 JSONObject data = new JSONObject(args[0].toString());
@@ -357,7 +363,6 @@ public class MainActivity extends AppCompatActivity implements TextureView.Surfa
                 Log.e("socket", "가장 가까운 사람 찾기 요청 처리 오류: " + e.getMessage());
             }
         });
-
     }
 
     /**
@@ -778,8 +783,12 @@ public class MainActivity extends AppCompatActivity implements TextureView.Surfa
                             if (textureView.isAvailable()) {
                                 Bitmap bitmap = textureView.getBitmap();
                                 if (bitmap != null) {
+
+
                                     // 객체 탐지 수행 - 결과만 가져오고 따로 그리진 않음
                                     processFrameForOverlay(bitmap);
+
+
                                 } else {
                                     isProcessingFrame = false;
                                 }
@@ -791,7 +800,7 @@ public class MainActivity extends AppCompatActivity implements TextureView.Surfa
 
                     // 다음 프레임 처리 예약 (더 짧은 간격으로 처리 가능)
                     if (backgroundHandler != null) {
-                        backgroundHandler.postDelayed(this, 50); // 100ms 간격으로 수정
+                        backgroundHandler.postDelayed(this, 100); // 100ms 간격으로 수정
                     }
                 }
             });
@@ -805,15 +814,34 @@ public class MainActivity extends AppCompatActivity implements TextureView.Surfa
         if (imageProcessor != null) {
             new Thread(() -> {
                 // 객체 탐지 및 추적 수행
+
+                long startTime = System.currentTimeMillis();
+
+
+
+
+
+
+                final List<SimpleTracker.TrackedObject> trackedObjects;
                 List<YoloImageProcessor.Detection> detections;
                 synchronized (imageLock){
+                    long anlstartTime = System.currentTimeMillis();
                     detections=imageProcessor.processImage(bitmap);
+                    long anlendTime = System.currentTimeMillis();
+                    Log.i("worktime","imageProcessor processImage 작업시간 : "+(anlendTime-anlstartTime));
+
+                    long anlstartTime2 = System.currentTimeMillis();
+                    trackedObjects = tracker.update(detections);
+                    long anlendTime2 = System.currentTimeMillis();
+                    Log.i("worktime","tracker update 작업시간 : "+(anlendTime2-anlstartTime2));
                 }
 
-                final List<SimpleTracker.TrackedObject> trackedObjects = tracker.update(detections);
+
+
 
                 Bitmap workingCopy = bitmap.copy(bitmap.getConfig(), true);
                 final Bitmap resultBitmap = drawDetectionsDirectly(workingCopy, trackedObjects);
+
 
                 sendImageViaWebSocket(resultBitmap);
 
@@ -937,6 +965,11 @@ public class MainActivity extends AppCompatActivity implements TextureView.Surfa
 
                 // 처리 후 비트맵 해제
                 bitmap.recycle();
+
+                long endTime = System.currentTimeMillis();
+                Log.i("worktime","작업시간 : "+(endTime-startTime));
+
+
             }).start();
         } else {
             isProcessingFrame = false;
@@ -1065,8 +1098,6 @@ public class MainActivity extends AppCompatActivity implements TextureView.Surfa
             }
         }).start();
     }
-
-    // 얼굴을 찾지 못했을 때 null 값으로 응답 전송
     private void sendEmptyFaceInfo(List<Integer> personIds) {
         try {
             JSONObject facesData = new JSONObject();
@@ -1251,6 +1282,9 @@ public class MainActivity extends AppCompatActivity implements TextureView.Surfa
             Canvas canvas = overlayHolder.lockCanvas();
             if (canvas != null) {
                 try {
+
+                    long startTime = System.currentTimeMillis();
+
                     // 캔버스 초기화
                     canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR);
 
@@ -1319,6 +1353,9 @@ public class MainActivity extends AppCompatActivity implements TextureView.Surfa
 
                     // 바운딩 박스 그리기
                     drawBoundingBoxesOnCanvas(canvas, trackedObjects);
+
+                    long endTime = System.currentTimeMillis();
+                    Log.i("worktime","캔버스에 그리는 작업시간 : "+(endTime-startTime));
                     // 가상 선과의 교차 감지
                     detectLineCrossing(trackedObjects, canvasWidth, canvasHeight);
 
@@ -1471,12 +1508,12 @@ public class MainActivity extends AppCompatActivity implements TextureView.Surfa
                     runOnUiThread(() -> {
                         Bitmap bitmap = textureView.getBitmap();
                         if (bitmap != null) {
-                            // 현재 추적 중인 객체 가져오기
+                            final List<SimpleTracker.TrackedObject> trackedObjects;
                             List<YoloImageProcessor.Detection> detections;
                             synchronized (imageLock){
                                 detections=imageProcessor.processImage(bitmap);
+                                trackedObjects = tracker.update(detections);
                             }
-                            List<SimpleTracker.TrackedObject> trackedObjects = tracker.update(detections);
 
                             // 키오스크 영역 중심점 계산
                             float kioskCenterX = (kioskLeft + kioskRight) / 2f;

@@ -116,7 +116,8 @@ public class YoloImageProcessor {
             long startTime = System.currentTimeMillis();
             interpreter.runForMultipleInputsOutputs(new Object[]{inputBuffer}, outputs);
             long endTime = System.currentTimeMillis();
-            Log.d(TAG, "모델 추론 시간: " + (endTime - startTime) + "ms");
+
+            Log.d("timecheck", "모델 추론 시간: " + (endTime - startTime) + "ms");
 
             // 출력 처리
             List<Detection> detections = new ArrayList<>();

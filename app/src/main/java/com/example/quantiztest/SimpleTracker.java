@@ -32,13 +32,17 @@ public class SimpleTracker {
             return new ArrayList<>(trackedObjects.values());
         }
 
+        // 매칭을 위해 모든 객체에 대해 다음 위치 예측
+        for (TrackedObject obj : trackedObjects.values()) {
+            obj.predictForMatching();
+        }
+
         // 현재 프레임에서 탐지된 객체에 일치하는 추적 객체 찾기
         boolean[] matched = new boolean[detections.size()];
 
         // 1단계: 높은 IoU 기준으로 확실한 매칭부터 처리
         float highIoUThreshold = 0.5f;  // 높은 확신을 가진 매칭을 위한 임계값
         matchDetectionsWithHighIoU(detections, matched, highIoUThreshold);
-
 
         // 2단계: 남은 객체들에 대해 더 낮은 IoU와 추가 특성 기반 매칭
         matchRemainingDetections(detections, matched);
@@ -58,8 +62,8 @@ public class SimpleTracker {
                 // 라벨이 같은 객체만 비교
                 if (!trackedObj.getLabel().equals(detection.getLabel())) continue;
 
-                // IoU 계산
-                float iou = calculateIoU(trackedObj, detection);
+                // IoU 계산 - 여기서는 예측된 위치를 사용
+                float iou = calculateIoUWithPrediction(trackedObj, detection);
 
                 // 최고 IoU 업데이트
                 if (iou > bestIoU) {
@@ -75,7 +79,7 @@ public class SimpleTracker {
                 trackedObj.update(matchedDetection);
                 matched[bestMatchIdx] = true;
             } else {
-                // 일치하는 객체가 없으면 나이 증가
+                // 일치하는 객체가 없으면 나이만 증가 (위치는 변경하지 않음)
                 trackedObj.incrementAge();
             }
         }
@@ -97,11 +101,83 @@ public class SimpleTracker {
             }
         }
 
+
+        detectCrossings();
         // 오래된 객체 제거
         removeOldObjects();
 
         // 현재 추적 중인 객체 목록 반환
         return new ArrayList<>(trackedObjects.values());
+    }
+
+    // 교차 상황 감지 및 처리 메서드
+    private void detectCrossings() {
+        List<TrackedObject> personObjects = new ArrayList<>();
+
+        // 사람 객체 필터링
+        for (TrackedObject obj : trackedObjects.values()) {
+            if ("person".equals(obj.getLabel())) {
+                personObjects.add(obj);
+            }
+        }
+
+        // 사람 객체가 2개 이상일 때만 교차 검사
+        if (personObjects.size() >= 2) {
+
+            for (int i = 0; i < personObjects.size() - 1; i++) {
+                TrackedObject person1 = personObjects.get(i);
+
+                for (int j = i + 1; j < personObjects.size(); j++) {
+                    TrackedObject person2 = personObjects.get(j);
+
+                    // 두 사람의 중심점
+                    float cx1 = (person1.getLeft() + person1.getRight()) / 2;
+                    float cy1 = (person1.getTop() + person1.getBottom()) / 2;
+                    float cx2 = (person2.getLeft() + person2.getRight()) / 2;
+                    float cy2 = (person2.getTop() + person2.getBottom()) / 2;
+
+                    // 거리 계산
+                    float distance = (float) Math.sqrt(
+                            Math.pow(cx1 - cx2, 2) + Math.pow(cy1 - cy2, 2)
+                    );
+
+                    // 두 사람의 너비/높이 평균
+                    float avgWidth = ((person1.getRight() - person1.getLeft()) +
+                            (person2.getRight() - person2.getLeft())) / 2;
+
+                    // 두 사람이 충분히 가까우면 (겹치거나 거의 겹치는 경우)
+                    if (distance < avgWidth * 1.2) {  // 120% 너비 이내 = 교차 중
+
+                        Log.i("personcross","사람겹칩");
+
+                        // 두 사람의 이동 방향
+                        float vx1 = person1.getVelocityX();
+                        float vy1 = person1.getVelocityY();
+                        float vx2 = person2.getVelocityX();
+                        float vy2 = person2.getVelocityY();
+
+                        // 속도 크기
+                        float speed1 = (float) Math.sqrt(vx1 * vx1 + vy1 * vy1);
+                        float speed2 = (float) Math.sqrt(vx2 * vx2 + vy2 * vy2);
+
+                        // 속도가 충분히 큰 경우에만 고려
+                        if (speed1 > 0.5 && speed2 > 0.5) {
+                            // 방향 내적 (음수면 서로 반대 방향)
+                            float dirDot = vx1 * vx2 + vy1 * vy2;
+
+                            // 서로 다른 방향으로 움직이는 경우 (교차 중)
+                            if (dirDot < 0) {
+                                // 방향 정보를 더 중요하게 사용하기 위해 두 객체의 속도 가중치 증가
+                                person1.boostVelocity(1.5f);  // 50% 증가
+                                person2.boostVelocity(1.5f);  // 50% 증가
+
+                                Log.d(TAG, "교차 감지: ID " + person1.getId() + " ↔ ID " + person2.getId());
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     // 남은 객체들에 대해 더 낮은 IoU와 추가 특성 매칭
@@ -119,8 +195,8 @@ public class SimpleTracker {
                 YoloImageProcessor.Detection detection = detections.get(i);
                 if (!trackedObj.getLabel().equals(detection.getLabel())) continue;
 
-                // IoU 계산
-                float iou = calculateIoU(trackedObj, detection);
+                // IoU 계산 - 예측된 위치 사용
+                float iou = calculateIoUWithPrediction(trackedObj, detection);
 
                 // 크기 유사성 측정
                 float trackedWidth = trackedObj.getRight() - trackedObj.getLeft();
@@ -132,8 +208,8 @@ public class SimpleTracker {
                         Math.min(trackedHeight / detHeight, detHeight / trackedHeight);
 
                 // 위치 유사성 (중심점 거리)
-                float trackedCenterX = (trackedObj.getLeft() + trackedObj.getRight()) / 2;
-                float trackedCenterY = (trackedObj.getTop() + trackedObj.getBottom()) / 2;
+                float trackedCenterX = trackedObj.getPredictedCenterX();
+                float trackedCenterY = trackedObj.getPredictedCenterY();
                 float detCenterX = (detection.getLeft() + detection.getRight()) / 2;
                 float detCenterY = (detection.getTop() + detection.getBottom()) / 2;
 
@@ -147,8 +223,12 @@ public class SimpleTracker {
 
                 float normDistance = Math.max(0, 1 - centerDistance / maxDim);
 
-                // 종합 점수 (IoU, 크기 유사성, 위치 유사성)
-                float score = iou * 0.6f + sizeRatio * 0.2f + normDistance * 0.2f;
+                // 방향 점수 계산
+                float directionScore = calculateDirectionScore(trackedObj, detCenterX, detCenterY);
+
+
+                float score = iou * 0.3f + sizeRatio * 0.1f + normDistance * 0.1f + directionScore * 0.5f;
+
 
                 if (score > bestScore) {
                     bestScore = score;
@@ -166,6 +246,42 @@ public class SimpleTracker {
         }
     }
 
+    // 방향 점수 계산 메서드
+    private float calculateDirectionScore(TrackedObject obj, float detCenterX, float detCenterY) {
+        float velX = obj.getVelocityX();
+        float velY = obj.getVelocityY();
+
+        // 속도 크기가 충분히 큰 경우에만 방향 고려
+        float speedMagnitude = (float) Math.sqrt(velX * velX + velY * velY);
+
+        // 0.5는 임계값 - 이 값보다 큰 속도에서만 방향 정보 고려
+        if (speedMagnitude > 0.5f) {
+            // 현재 위치의 중심점
+            float currentCenterX = (obj.getLeft() + obj.getRight()) / 2;
+            float currentCenterY = (obj.getTop() + obj.getBottom()) / 2;
+
+            // 실제 이동 방향 벡터 (현재 위치 → 탐지된 위치)
+            float actualDirX = detCenterX - currentCenterX;
+            float actualDirY = detCenterY - currentCenterY;
+
+            // 방향 벡터 내적 계산
+            float dotProduct = velX * actualDirX + velY * actualDirY;
+
+            // 실제 이동 벡터의 크기
+            float actualMag = (float) Math.sqrt(actualDirX * actualDirX + actualDirY * actualDirY);
+
+            // 방향 일치도 계산 (코사인 유사도)
+            if (actualMag > 0) {
+                float cosine = dotProduct / (speedMagnitude * actualMag);
+                // -1~1 범위를 0~1로 변환 후 제곱하여 차이를 더 강조
+                float normalizedScore = (cosine + 1) / 2;
+                return normalizedScore * normalizedScore;  // 제곱하여 일치 시 더 높은 점수
+            }
+        }
+
+        // 방향을 고려할 수 없는 경우
+        return 0.3f;  // 낮은 기본값
+    }
     // 높은 IoU 값으로 확실한 매칭 찾기
     private void matchDetectionsWithHighIoU(List<YoloImageProcessor.Detection> detections,
                                             boolean[] matched, float highIoUThreshold) {
@@ -179,7 +295,7 @@ public class SimpleTracker {
                 YoloImageProcessor.Detection detection = detections.get(i);
                 if (!trackedObj.getLabel().equals(detection.getLabel())) continue;
 
-                float iou = calculateIoU(trackedObj, detection);
+                float iou = calculateIoUWithPrediction(trackedObj, detection);
                 if (iou > bestIoU) {
                     bestIoU = iou;
                     bestMatchIdx = i;
@@ -193,7 +309,6 @@ public class SimpleTracker {
             }
         }
     }
-
 
     /**
      * 모든 추적 객체의 나이를 증가시킴
@@ -219,7 +334,32 @@ public class SimpleTracker {
     }
 
     /**
-     * 두 객체 간의 IoU(Intersection over Union)를 계산
+     * 두 객체 간의 IoU(Intersection over Union)를 계산 - 예측된 위치 사용
+     */
+    private float calculateIoUWithPrediction(TrackedObject trackedObj, YoloImageProcessor.Detection detection) {
+        // 교차 영역 계산 - 예측된 위치 사용
+        float xLeft = Math.max(trackedObj.getPredictedLeft(), detection.getLeft());
+        float yTop = Math.max(trackedObj.getPredictedTop(), detection.getTop());
+        float xRight = Math.min(trackedObj.getPredictedRight(), detection.getRight());
+        float yBottom = Math.min(trackedObj.getPredictedBottom(), detection.getBottom());
+
+        // 교차 영역이 없으면 0 반환
+        if (xRight < xLeft || yBottom < yTop) return 0;
+
+        float intersectionArea = (xRight - xLeft) * (yBottom - yTop);
+
+        // 각 영역 계산
+        float trackedObjArea = (trackedObj.getPredictedRight() - trackedObj.getPredictedLeft()) *
+                (trackedObj.getPredictedBottom() - trackedObj.getPredictedTop());
+        float detectionArea = (detection.getRight() - detection.getLeft()) *
+                (detection.getBottom() - detection.getTop());
+
+        // IoU 계산
+        return intersectionArea / (trackedObjArea + detectionArea - intersectionArea);
+    }
+
+    /**
+     * 원래 IoU 계산 메서드 (디스플레이용)
      */
     private float calculateIoU(TrackedObject trackedObj, YoloImageProcessor.Detection detection) {
         // 교차 영역 계산
@@ -263,6 +403,12 @@ public class SimpleTracker {
         private float prevCenterY;
         private long lastMatchedTime;
 
+        // 매칭 계산용 예측 위치 (화면에 표시되지 않음)
+        private float predictedLeft;
+        private float predictedTop;
+        private float predictedRight;
+        private float predictedBottom;
+
         public TrackedObject(int id, String label, float confidence,
                              float left, float top, float right, float bottom) {
             this.id = id;
@@ -278,6 +424,17 @@ public class SimpleTracker {
             this.velocityY = 0;
             this.prevCenterX = (left + right) / 2;
             this.prevCenterY = (top + bottom) / 2;
+
+            // 초기 예측 위치는 현재 위치와 동일
+            this.predictedLeft = left;
+            this.predictedTop = top;
+            this.predictedRight = right;
+            this.predictedBottom = bottom;
+        }
+
+        public void boostVelocity(float factor) {
+            this.velocityX *= factor;
+            this.velocityY *= factor;
         }
 
         /**
@@ -291,7 +448,6 @@ public class SimpleTracker {
             // 속도 업데이트 (이동 평균 사용)
             velocityX = VELOCITY_WEIGHT * (centerX - prevCenterX) + (1-VELOCITY_WEIGHT) * velocityX;
             velocityY = VELOCITY_WEIGHT * (centerY - prevCenterY) + (1-VELOCITY_WEIGHT) * velocityY;
-
 
             this.confidence = detection.getConfidence();
             this.left = detection.getLeft();
@@ -307,26 +463,36 @@ public class SimpleTracker {
             // 나이 초기화 및 매칭 시간 업데이트
             this.age = 0;
             this.lastMatchedTime = System.currentTimeMillis();
+
+            // 예측 위치도 현재 위치로 업데이트
+            this.predictedLeft = this.left;
+            this.predictedTop = this.top;
+            this.predictedRight = this.right;
+            this.predictedBottom = this.bottom;
         }
 
         public void incrementAge() {
             this.age++;
         }
 
-        // 속도 기반 위치 예측
-        public void predict() {
+
+        // 매칭 계산용 위치 예측 (실제 표시되는 위치는 변경되지 않음)
+        public void predictForMatching() {
             if (age > 0 && USE_VELOCITY_PREDICTION) {
                 float width = right - left;
                 float height = bottom - top;
 
-                left += velocityX;
-                top += velocityY;
-                right = left + width;
-                bottom = top + height;
-
-                // 중심점 업데이트
-                prevCenterX += velocityX;
-                prevCenterY += velocityY;
+                // 예측 위치만 업데이트
+                predictedLeft = left + velocityX;
+                predictedTop = top + velocityY;
+                predictedRight = predictedLeft + width;
+                predictedBottom = predictedTop + height;
+            } else {
+                // 예측이 필요 없으면 현재 위치 복사
+                predictedLeft = left;
+                predictedTop = top;
+                predictedRight = right;
+                predictedBottom = bottom;
             }
         }
 
@@ -340,6 +506,17 @@ public class SimpleTracker {
         public float getBottom() { return bottom; }
         public int getAge() { return age; }
         public long getLastMatchedTime() { return lastMatchedTime; }
+        public float getVelocityX() { return velocityX; }
+        public float getVelocityY() { return velocityY; }
+
+        // 예측 위치 getter
+        public float getPredictedLeft() { return predictedLeft; }
+        public float getPredictedTop() { return predictedTop; }
+        public float getPredictedRight() { return predictedRight; }
+        public float getPredictedBottom() { return predictedBottom; }
+        public float getPredictedCenterX() { return (predictedLeft + predictedRight) / 2; }
+        public float getPredictedCenterY() { return (predictedTop + predictedBottom) / 2; }
+
         @Override
         public String toString() {
             return id + ": " + label + " (" + String.format("%.2f", confidence * 100) + "%), age=" + age;
