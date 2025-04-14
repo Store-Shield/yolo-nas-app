@@ -11,7 +11,7 @@ import java.util.Map;
 public class SimpleTracker {
     private static final String TAG = "SimpleTracker";
     private static final float IOU_THRESHOLD = 0.25f;  // 같은 객체로 간주할 IoU 임계값 낮출수록 잘 추정
-    private static final int MAX_AGE = 20;  // 객체가 사라졌다고 판단하기 전 최대 프레임 수 즉 높을수록 일시적으로 가려져도 유지
+    private static final int MAX_AGE = 10;  // 객체가 사라졌다고 판단하기 전 최대 프레임 수 즉 높을수록 일시적으로 가려져도 유지
 
     private static final boolean USE_VELOCITY_PREDICTION = true;
     private static final float VELOCITY_WEIGHT = 0.7f;
@@ -177,7 +177,7 @@ public class SimpleTracker {
                             (person2.getRight() - person2.getLeft())) / 2;
 
                     // 두 사람이 충분히 가까우면 (겹치거나 거의 겹치는 경우)
-                    if (distance < avgWidth * 1.2) {  // 120% 너비 이내 = 교차 중
+                    if (distance < avgWidth) {  // 120% 너비 이내 = 교차 중
 
                         Log.i("personcross","사람겹칩");
 
@@ -212,8 +212,51 @@ public class SimpleTracker {
     }
 
 
-    // 남은 객체들에 대해 더 낮은 IoU와 추가 특성 매칭
     private void matchRemainingDetections(List<YoloImageProcessor.Detection> detections, boolean[] matched) {
+        // 1. 사람 객체들 간의 겹침 여부를 미리 확인
+        Map<Integer, Boolean> personOverlapStatus = new HashMap<>();
+
+        // 추적 중인 사람 객체들을 모두 가져옴
+        List<TrackedObject> personObjects = new ArrayList<>();
+        for (TrackedObject obj : trackedObjects.values()) {
+            if ("person".equals(obj.getLabel())) {
+                personObjects.add(obj);
+                personOverlapStatus.put(obj.getId(), false); // 기본값: 겹치지 않음
+            }
+        }
+
+        // 사람 객체들 간의 겹침 확인
+        if (personObjects.size() >= 2) {
+            for (int i = 0; i < personObjects.size() - 1; i++) {
+                TrackedObject person1 = personObjects.get(i);
+
+                for (int j = i + 1; j < personObjects.size(); j++) {
+                    TrackedObject person2 = personObjects.get(j);
+
+                    // 두 사람의 중심점 간 거리 계산
+                    float cx1 = (person1.getLeft() + person1.getRight()) / 2;
+                    float cy1 = (person1.getTop() + person1.getBottom()) / 2;
+                    float cx2 = (person2.getLeft() + person2.getRight()) / 2;
+                    float cy2 = (person2.getTop() + person2.getBottom()) / 2;
+
+                    float distance = (float) Math.sqrt(
+                            Math.pow(cx1 - cx2, 2) + Math.pow(cy1 - cy2, 2)
+                    );
+
+                    // 두 사람의 너비 평균
+                    float avgWidth = ((person1.getRight() - person1.getLeft()) +
+                            (person2.getRight() - person2.getLeft())) / 2;
+
+                    // 겹침 여부 판단 (평균 너비 이내면 겹침으로 간주)
+                    if (distance < avgWidth * 1.2) {
+                        personOverlapStatus.put(person1.getId(), true); // 겹침
+                        personOverlapStatus.put(person2.getId(), true); // 겹침
+                    }
+                }
+            }
+        }
+
+        // 2. 각 객체에 대해 매칭 수행
         for (TrackedObject trackedObj : new ArrayList<>(trackedObjects.values())) {
             // 이미 매칭된 객체는 건너뛰기
             if (trackedObj.getLastMatchedTime() == 0) continue;
@@ -259,12 +302,23 @@ public class SimpleTracker {
                 float directionScore = calculateDirectionScore(trackedObj, detCenterX, detCenterY);
 
                 float score;
+
                 if ("person".equals(trackedObj.getLabel())) {
-                    // 사람은 방향성에 더 높은 가중치 부여 (기존과 동일)
-                    score = iou * 0.3f + sizeRatio * 0.1f + normDistance * 0.1f + directionScore * 0.5f;
+                    // 사람이면서 겹침 상황인 경우
+                    if (personOverlapStatus.containsKey(trackedObj.getId()) &&
+                            personOverlapStatus.get(trackedObj.getId())) {
+                        // 겹침 상황: 방향성 가중치 증가
+                        score = iou * 0.3f + sizeRatio * 0.1f + normDistance * 0.1f + directionScore * 0.5f;
+                        Log.d("personcheck", "사람 겹침 상황 - ID: " + trackedObj.getId() + " 방향성 가중치 증가");
+                    } else {
+                        // 일반 상황: 방향성 가중치 낮음
+                        score = iou * 0.55f + sizeRatio * 0.2f + normDistance * 0.25f;
+                        Log.d("personcheck", "겹치지않을경우 " + trackedObj.getId() + " 방향성 가중치 증가");
+
+                    }
                 } else {
-                    // 다른 객체는 방향성 가중치를 낮추고 IoU와 위치 유사성에 더 높은 가중치 부여
-                    score = iou * 0.5f + sizeRatio * 0.2f + normDistance * 0.25f + directionScore * 0.05f;
+                    // 다른 객체는 방향성 가중치를 매우 낮게 설정
+                    score = iou * 0.6f + sizeRatio * 0.2f + normDistance * 0.15f + directionScore * 0.05f;
                 }
 
                 if (score > bestScore) {
@@ -282,7 +336,6 @@ public class SimpleTracker {
             }
         }
     }
-
     // 방향 점수 계산 메서드
     private float calculateDirectionScore(TrackedObject obj, float detCenterX, float detCenterY) {
         float velX = obj.getVelocityX();

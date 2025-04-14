@@ -116,7 +116,7 @@ public class MainActivity extends AppCompatActivity implements TextureView.Surfa
     private boolean isProcessingFrame = false;
     private boolean isCameraMode = false;
     //ip변경부분
-    final String connectUrl="https://0509-223-194-133-239.ngrok-free.app";
+    final String connectUrl="https://97f1-223-194-133-239.ngrok-free.app";
     private Socket mSocket;
 
     // 지금까지 본 모든 사람 ID들
@@ -181,16 +181,16 @@ public class MainActivity extends AppCompatActivity implements TextureView.Surfa
         // onCreate 메서드 내에서 선 초기화 부분 수정
 // 방향을 반대로 바꿈
         virtualLineStartX = 640;
-        virtualLineStartY = 550;
+        virtualLineStartY = 500;
         virtualLineEndX = 0;
-        virtualLineEndY = 550;
+        virtualLineEndY = 500;
 
 
         // 키오스크 영역 초기화 (640x640 기준)
         kioskLeft = 30;
-        kioskTop = 420;
+        kioskTop = 370;
         kioskRight = 100;
-        kioskBottom = 470;
+        kioskBottom = 420;
 
 
 // 객체 추적 맵 초기화
@@ -304,10 +304,10 @@ public class MainActivity extends AppCompatActivity implements TextureView.Surfa
             e.printStackTrace();
         }
         mSocket.connect();  // 연결 시작
-        Log.d("socketcheck", "웹소켓 연결시도");
+        Log.d("socketcheck", "socket try");
         // 연결 성공 시
         mSocket.on(Socket.EVENT_CONNECT, args -> {
-            Log.d("socketcheck", "웹소켓 연결 성공");
+            Log.d("socketcheck", "success");
             try {
                 JSONObject connectMsg = new JSONObject();
                 connectMsg.put("type", "connect");
@@ -316,7 +316,7 @@ public class MainActivity extends AppCompatActivity implements TextureView.Surfa
                 //event =message이거이므로 서버에있는 @socketio.on('message')이거랑 매칭이 된다.
                 Log.d("socket", "연결 메시지 전송 완료");
             } catch (Exception e) {
-                Log.e("socketcheck", "연결 메시지 전송 실패: " + e.getMessage());
+                Log.e("socketcheck", "fail: " + e.getMessage());
             }
         });
 
