@@ -205,7 +205,7 @@ public class YoloImageProcessor {
                 }
             }
 
-            return  applyNMS(allDetections, 0.8f);
+            return  applyNMS(allDetections, 0.7f);
 
         } catch (Exception e) {
             Log.e(TAG, "모델 실행 중 오류 발생: " + e.getMessage(), e);
@@ -227,7 +227,7 @@ public class YoloImageProcessor {
         boolean[] isRemoved = new boolean[sortedDetections.size()];
 
         // 사람 클래스에 대해 더 높은 IoU 임계값 사용
-        float personIouThreshold = 0.75f;  // 사람 클래스에 대한 더 높은 임계값
+        float personIouThreshold = 0.65f;  // 사람 클래스에 대한 더 높은 임계값
 
         for (int i = 0; i < sortedDetections.size(); i++) {
             if (isRemoved[i]) continue;

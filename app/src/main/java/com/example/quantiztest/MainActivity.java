@@ -116,7 +116,7 @@ public class MainActivity extends AppCompatActivity implements TextureView.Surfa
     private boolean isProcessingFrame = false;
     private boolean isCameraMode = false;
     //ip변경부분
-    final String connectUrl="https://a9b1-223-194-133-239.ngrok-free.app";
+    final String connectUrl="https://0509-223-194-133-239.ngrok-free.app";
     private Socket mSocket;
 
     // 지금까지 본 모든 사람 ID들
@@ -299,14 +299,15 @@ public class MainActivity extends AppCompatActivity implements TextureView.Surfa
     private void setupSocket() {
         try {
             mSocket = IO.socket(connectUrl);  // Socket.IO 서버 URL
+            Log.d("socketcheck", "웹소켓 연결시도");
         } catch (Exception e) {
             e.printStackTrace();
         }
         mSocket.connect();  // 연결 시작
-        Log.d("socket", "웹소켓 연결시도");
+        Log.d("socketcheck", "웹소켓 연결시도");
         // 연결 성공 시
         mSocket.on(Socket.EVENT_CONNECT, args -> {
-            Log.d("socket", "웹소켓 연결 성공");
+            Log.d("socketcheck", "웹소켓 연결 성공");
             try {
                 JSONObject connectMsg = new JSONObject();
                 connectMsg.put("type", "connect");
@@ -315,7 +316,7 @@ public class MainActivity extends AppCompatActivity implements TextureView.Surfa
                 //event =message이거이므로 서버에있는 @socketio.on('message')이거랑 매칭이 된다.
                 Log.d("socket", "연결 메시지 전송 완료");
             } catch (Exception e) {
-                Log.e("socket", "연결 메시지 전송 실패: " + e.getMessage());
+                Log.e("socketcheck", "연결 메시지 전송 실패: " + e.getMessage());
             }
         });
 

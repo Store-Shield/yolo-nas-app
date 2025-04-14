@@ -11,7 +11,7 @@ import java.util.Map;
 public class SimpleTracker {
     private static final String TAG = "SimpleTracker";
     private static final float IOU_THRESHOLD = 0.25f;  // 같은 객체로 간주할 IoU 임계값 낮출수록 잘 추정
-    private static final int MAX_AGE = 10;  // 객체가 사라졌다고 판단하기 전 최대 프레임 수 즉 높을수록 일시적으로 가려져도 유지
+    private static final int MAX_AGE = 20;  // 객체가 사라졌다고 판단하기 전 최대 프레임 수 즉 높을수록 일시적으로 가려져도 유지
 
     private static final boolean USE_VELOCITY_PREDICTION = true;
     private static final float VELOCITY_WEIGHT = 0.7f;
@@ -84,23 +84,54 @@ public class SimpleTracker {
             }
         }
 
-        // 매칭되지 않은 새 객체 추가
         for (int i = 0; i < detections.size(); i++) {
             if (!matched[i]) {
                 YoloImageProcessor.Detection detection = detections.get(i);
-                TrackedObject newTrackedObj = new TrackedObject(
-                        nextId++,
-                        detection.getLabel(),
-                        detection.getConfidence(),
-                        detection.getLeft(),
-                        detection.getTop(),
-                        detection.getRight(),
-                        detection.getBottom()
-                );
-                trackedObjects.put(newTrackedObj.getId(), newTrackedObj);
+
+                // 이미 비슷한 위치에 같은 종류의 객체가 있는지 확인
+                boolean duplicateFound = false;
+                for (TrackedObject existingObj : trackedObjects.values()) {
+                    // 같은 레이블의 객체만 확인
+                    if (existingObj.getLabel().equals(detection.getLabel())) {
+                        // 중심점 계산
+                        float existingCenterX = (existingObj.getLeft() + existingObj.getRight()) / 2;
+                        float existingCenterY = (existingObj.getTop() + existingObj.getBottom()) / 2;
+                        float detCenterX = (detection.getLeft() + detection.getRight()) / 2;
+                        float detCenterY = (detection.getTop() + detection.getBottom()) / 2;
+
+                        // 거리 계산
+                        float distance = (float) Math.sqrt(
+                                Math.pow(existingCenterX - detCenterX, 2) +
+                                        Math.pow(existingCenterY - detCenterY, 2));
+
+                        // 객체 크기 계산
+                        float existingWidth = existingObj.getRight() - existingObj.getLeft();
+                        float detWidth = detection.getRight() - detection.getLeft();
+                        float avgWidth = (existingWidth + detWidth) / 2;
+
+                        // 너무 가까이 있으면 중복으로 간주
+                        if (distance < avgWidth * 1.5) {
+                            duplicateFound = true;
+                            break;
+                        }
+                    }
+                }
+
+                // 중복이 아닌 경우에만 새 객체 추가
+                if (!duplicateFound) {
+                    TrackedObject newTrackedObj = new TrackedObject(
+                            nextId++,
+                            detection.getLabel(),
+                            detection.getConfidence(),
+                            detection.getLeft(),
+                            detection.getTop(),
+                            detection.getRight(),
+                            detection.getBottom()
+                    );
+                    trackedObjects.put(newTrackedObj.getId(), newTrackedObj);
+                }
             }
         }
-
 
         detectCrossings();
         // 오래된 객체 제거
@@ -180,6 +211,7 @@ public class SimpleTracker {
         }
     }
 
+
     // 남은 객체들에 대해 더 낮은 IoU와 추가 특성 매칭
     private void matchRemainingDetections(List<YoloImageProcessor.Detection> detections, boolean[] matched) {
         for (TrackedObject trackedObj : new ArrayList<>(trackedObjects.values())) {
@@ -226,9 +258,14 @@ public class SimpleTracker {
                 // 방향 점수 계산
                 float directionScore = calculateDirectionScore(trackedObj, detCenterX, detCenterY);
 
-
-                float score = iou * 0.3f + sizeRatio * 0.1f + normDistance * 0.1f + directionScore * 0.5f;
-
+                float score;
+                if ("person".equals(trackedObj.getLabel())) {
+                    // 사람은 방향성에 더 높은 가중치 부여 (기존과 동일)
+                    score = iou * 0.3f + sizeRatio * 0.1f + normDistance * 0.1f + directionScore * 0.5f;
+                } else {
+                    // 다른 객체는 방향성 가중치를 낮추고 IoU와 위치 유사성에 더 높은 가중치 부여
+                    score = iou * 0.5f + sizeRatio * 0.2f + normDistance * 0.25f + directionScore * 0.05f;
+                }
 
                 if (score > bestScore) {
                     bestScore = score;
