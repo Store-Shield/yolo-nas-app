@@ -90,6 +90,7 @@ public class MainActivity extends AppCompatActivity implements TextureView.Surfa
     // TFLite 모델을 로드하고 관리하는 클래스 인스턴스
     private TFLiteLoader tfliteLoader;
     private TFLiteLoader tfliteLoaderface;
+    private TFLiteLoader tfliteLoader3D;
     // 이미지 처리 및 객체 탐지를 담당하는 클래스 인스턴스
     private YoloImageProcessor imageProcessor;
 
@@ -246,6 +247,8 @@ public class MainActivity extends AppCompatActivity implements TextureView.Surfa
 
         // TFLite 모델 로더 인스턴스 생성
         tfliteLoaderface = new TFLiteLoader(this,"face_det_lite_quantized.tflite");
+
+        tfliteLoader3D = new TFLiteLoader(this,"deepbox-vgg3ddetection.tflite");
         // assets 폴더에서 모델 로드 시도
         if (tfliteLoader.loadModelFromAssets()) {
             // 모델 로드 성공 시 로그 출력 및 토스트 메시지 표시
@@ -270,6 +273,18 @@ public class MainActivity extends AppCompatActivity implements TextureView.Surfa
             // 모델 로드 실패 시 로그 출력 및 토스트 메시지 표시
             Log.e("face", "Face TFLite 모델 로드에 실패했습니다.");
             Toast.makeText(this, "face 모델 로드 실패!", Toast.LENGTH_SHORT).show();
+        }
+
+        if (tfliteLoader3D.loadModelFromAssets()) {
+            // 모델 로드 성공 시 로그 출력 및 토스트 메시지 표시
+            Log.i("face", "3D-Deep-BOX TFLite 모델이 성공적으로 로드되었습니다.");
+            Toast.makeText(this, "3D-Deep-BOX 모델 로드 성공!", Toast.LENGTH_SHORT).show();
+            // FaceDetector 초기화
+            faceDetector = new FaceDetector(this, tfliteLoader3D.getTfliteInterpreter());
+        } else {
+            // 모델 로드 실패 시 로그 출력 및 토스트 메시지 표시
+            Log.e("face", "3D-Deep-BOX TFLite 모델 로드에 실패했습니다.");
+            Toast.makeText(this, "3D-Deep-BOX 모델 로드 실패!", Toast.LENGTH_SHORT).show();
         }
 
 
@@ -832,7 +847,7 @@ public class MainActivity extends AppCompatActivity implements TextureView.Surfa
                     Log.i("worktime","imageProcessor processImage 작업시간 : "+(anlendTime-anlstartTime));
 
                     long anlstartTime2 = System.currentTimeMillis();
-                    trackedObjects = tracker.update(detections);
+                    trackedObjects = tracker.update(detections,bitmap);
                     long anlendTime2 = System.currentTimeMillis();
                     Log.i("worktime","tracker update 작업시간 : "+(anlendTime2-anlstartTime2));
                 }
@@ -993,7 +1008,7 @@ public class MainActivity extends AppCompatActivity implements TextureView.Surfa
                     synchronized (imageLock){
                         detections=imageProcessor.processImage(currentBitmap);
                     }
-                    final List<SimpleTracker.TrackedObject> trackedObjects = tracker.update(detections);
+                    final List<SimpleTracker.TrackedObject> trackedObjects = tracker.update(detections,currentBitmap);
 
                     if (faces.isEmpty()) {
                         Log.d("face", "프레임에서 얼굴을 찾을 수 없습니다.");
@@ -1377,7 +1392,7 @@ public class MainActivity extends AppCompatActivity implements TextureView.Surfa
 
         // 각 객체에 대해 가상 선과의 교차 확인
         for (SimpleTracker.TrackedObject obj : trackedObjects) {
-            if (obj.getConfidence() >= 0.7f && ("cup".equals(obj.getLabel())||"laptop".equals(obj.getLabel()) )) {
+            if (obj.getConfidence() >= 0.7f && ("cup".equals(obj.getLabel())||"banana".equals(obj.getLabel())||"apple".equals(obj.getLabel()) )) {
                 int objectId = obj.getId();
 
                 // 객체의 중심점 계산 캔버스에서의위치인것
@@ -1513,7 +1528,7 @@ public class MainActivity extends AppCompatActivity implements TextureView.Surfa
                             List<YoloImageProcessor.Detection> detections;
                             synchronized (imageLock){
                                 detections=imageProcessor.processImage(bitmap);
-                                trackedObjects = tracker.update(detections);
+                                trackedObjects = tracker.update(detections,bitmap);
                             }
 
                             // 키오스크 영역 중심점 계산
