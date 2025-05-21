@@ -329,12 +329,14 @@ public class SimpleTracker {
                 float centerDistance = (float) Math.sqrt(
                         Math.pow(trackedCenterX - detCenterX, 2) +
                                 Math.pow(trackedCenterY - detCenterY, 2));
+// 수정된 코드 - 더 큰 거리 허용 범위 사용
+                float maxAllowedDistance = 400.0f; // 혹은 화면 크기의 일정 비율 (예: 화면 대각선의 1/3)
 
-                float maxDim = Math.max(
-                        Math.max(trackedWidth, trackedHeight),
-                        Math.max(detWidth, detHeight));
+                // 거리 기반 점수 계산 (0~1 범위)
+                float baseNormDistance = Math.max(0, 1 - (centerDistance / maxAllowedDistance));
 
-                float normDistance = Math.max(0, 1 - centerDistance / maxDim);
+                // 최소값 0.5 보장
+                float normDistance = 0.5f + (baseNormDistance * 0.5f);
 
                 // 방향 점수 계산
                 float directionScore = calculateDirectionScore(trackedObj, detCenterX, detCenterY);
@@ -364,7 +366,8 @@ public class SimpleTracker {
                     }
                 } else {
                     // 다른 객체는 방향성 가중치를 매우 낮게 설정
-                    score = iou * 0.6f + sizeRatio * 0.2f + normDistance * 0.15f + directionScore * 0.05f;
+                    score = iou * 0.1f + sizeRatio * 0.2f + normDistance * 0.4f + directionScore * 0.3f;
+                    Log.d("other", " 컵,사과,바나나 매칭중 " + trackedObj.getId() );
                 }
 
                 if (score > bestScore) {
