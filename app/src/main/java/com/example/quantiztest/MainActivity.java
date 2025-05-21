@@ -90,7 +90,7 @@ public class MainActivity extends AppCompatActivity implements TextureView.Surfa
     // TFLite 모델을 로드하고 관리하는 클래스 인스턴스
     private TFLiteLoader tfliteLoader;
     private TFLiteLoader tfliteLoaderface;
-    private TFLiteLoader tfliteLoader3D;
+
     // 이미지 처리 및 객체 탐지를 담당하는 클래스 인스턴스
     private YoloImageProcessor imageProcessor;
 
@@ -248,7 +248,7 @@ public class MainActivity extends AppCompatActivity implements TextureView.Surfa
         // TFLite 모델 로더 인스턴스 생성
         tfliteLoaderface = new TFLiteLoader(this,"face_det_lite_quantized.tflite");
 
-        tfliteLoader3D = new TFLiteLoader(this,"deepbox-vgg3ddetection.tflite");
+
         // assets 폴더에서 모델 로드 시도
         if (tfliteLoader.loadModelFromAssets()) {
             // 모델 로드 성공 시 로그 출력 및 토스트 메시지 표시
@@ -275,17 +275,7 @@ public class MainActivity extends AppCompatActivity implements TextureView.Surfa
             Toast.makeText(this, "face 모델 로드 실패!", Toast.LENGTH_SHORT).show();
         }
 
-        if (tfliteLoader3D.loadModelFromAssets()) {
-            // 모델 로드 성공 시 로그 출력 및 토스트 메시지 표시
-            Log.i("face", "3D-Deep-BOX TFLite 모델이 성공적으로 로드되었습니다.");
-            Toast.makeText(this, "3D-Deep-BOX 모델 로드 성공!", Toast.LENGTH_SHORT).show();
-            // FaceDetector 초기화
-            faceDetector = new FaceDetector(this, tfliteLoader3D.getTfliteInterpreter());
-        } else {
-            // 모델 로드 실패 시 로그 출력 및 토스트 메시지 표시
-            Log.e("face", "3D-Deep-BOX TFLite 모델 로드에 실패했습니다.");
-            Toast.makeText(this, "3D-Deep-BOX 모델 로드 실패!", Toast.LENGTH_SHORT).show();
-        }
+
 
 
         // 카메라 시작 버튼 클릭 이벤트 설정
